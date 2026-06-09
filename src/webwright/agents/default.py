@@ -282,23 +282,25 @@ class DefaultAgent:
         ]
         if len(obs_indices) <= n:
             return
-        placeholder = "(ARIA snapshot pruned; see most recent observation)"
+        placeholder = "(Snapshot pruned; see most recent observation)"
+        snapshot_keys = ("aria_snapshot", "ui_snapshot")
         for idx in obs_indices[:-n]:
             msg = self.messages[idx]
             obs = msg["extra"]["observation"]
-            aria = obs.get("aria_snapshot", "")
-            if not aria:
-                continue
-            content = msg.get("content")
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict) and part.get("type") in ("text", "input_text"):
-                        text = part.get("text", "")
-                        if aria in text:
-                            part["text"] = text.replace(aria, placeholder)
-            elif isinstance(content, str) and aria in content:
-                msg["content"] = content.replace(aria, placeholder)
-            obs["aria_snapshot"] = ""
+            for key in snapshot_keys:
+                snapshot_text = obs.get(key, "")
+                if not snapshot_text:
+                    continue
+                content = msg.get("content")
+                if isinstance(content, list):
+                    for part in content:
+                        if isinstance(part, dict) and part.get("type") in ("text", "input_text"):
+                            text = part.get("text", "")
+                            if snapshot_text in text:
+                                part["text"] = text.replace(snapshot_text, placeholder)
+                elif isinstance(content, str) and snapshot_text in content:
+                    msg["content"] = content.replace(snapshot_text, placeholder)
+                obs[key] = ""
 
     def _compact_history(self) -> None:
         """Summarize the running transcript via an LLM call and reset messages to [system, summary].

@@ -7,6 +7,8 @@ from webwright import Environment
 
 _ENVIRONMENT_MAPPING = {
     "local_browser": "webwright.environments.local_browser.LocalBrowserEnvironment",
+    "local_android": "webwright.environments.local_mobile.LocalMobileEnvironment",
+    "local_mobile": "webwright.environments.local_mobile.LocalMobileEnvironment",
     "local_workspace": "webwright.environments.local_workspace.LocalWorkspaceEnvironment",
 }
 

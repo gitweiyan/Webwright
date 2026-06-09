@@ -84,6 +84,40 @@ def check_openai_key():
     )
 
 
+def check_uiautomator2():
+    if find_spec("uiautomator2") is not None:
+        return True, "uiautomator2 installed"
+
+    return False, (
+        "uiautomator2 not installed\nFix: pip install -e .[android] or pip install uiautomator2"
+    )
+
+
+def check_adb_devices():
+    try:
+        result = subprocess.run(
+            ["adb", "devices"],
+            capture_output=True,
+            text=True,
+        )
+    except FileNotFoundError:
+        return False, "adb not found\nFix: install Android platform-tools"
+    except Exception as exc:
+        return False, str(exc)
+
+    if result.returncode != 0:
+        return False, result.stderr.strip() or "adb devices failed"
+
+    device_lines = [
+        line
+        for line in result.stdout.splitlines()[1:]
+        if line.strip() and "\tdevice" in line
+    ]
+    if device_lines:
+        return True, f"{len(device_lines)} Android device(s) connected"
+    return False, "no authorized Android devices found\nFix: connect a device and enable USB debugging"
+
+
 def check_plugin_manifests():
     claude = Path(".claude-plugin/plugin.json")
     codex = Path(".codex-plugin/plugin.json")

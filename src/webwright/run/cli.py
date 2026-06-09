@@ -17,7 +17,7 @@ from webwright.run.doctor import run_doctor
 
 DEFAULT_CONFIGS = ["base.yaml", "model_openai.yaml"]
 
-app = typer.Typer(no_args_is_help=True)
+app = typer.Typer(no_args_is_help=True, invoke_without_command=True)
 console = Console(highlight=False)
 
 
@@ -134,6 +134,60 @@ def run_one(
     return result
 
 
+def _run_from_options(
+    *,
+    task: str | None,
+    task_id: str | None,
+    start_url: str | None,
+    config_spec: list[str],
+    output_dir: Path | None,
+    debug: bool,
+) -> Any:
+    return run_one(
+        task=task,
+        task_id=task_id,
+        start_url=start_url,
+        config_spec=config_spec,
+        output_dir=output_dir,
+        debug=debug,
+    )
+
+
+@app.callback()
+def root(
+    ctx: typer.Context,
+    task: str | None = typer.Option(
+        None, "-t", "--task", help="Natural language task description."
+    ),
+    task_id: str | None = typer.Option(
+        None, "--task-id", help="Optional identifier used in the output directory name."
+    ),
+    start_url: str | None = typer.Option(
+        None, "--start-url", help="Optional starting URL for the task."
+    ),
+    config_spec: list[str] = typer.Option(DEFAULT_CONFIGS, "-c", "--config"),
+    output_dir: Path | None = typer.Option(None, "-o", "--output-dir"),
+    debug: bool = typer.Option(
+        False,
+        "--debug",
+        help="Launch headed local Playwright with devtools and keep it open for inspection.",
+    ),
+) -> Any:
+    if ctx.invoked_subcommand is not None:
+        return None
+    if task is None:
+        console.print(ctx.get_help())
+        raise typer.Exit()
+    return _run_from_options(
+        task=task,
+        task_id=task_id,
+        start_url=start_url,
+        config_spec=config_spec,
+        output_dir=output_dir,
+        debug=debug,
+    )
+
+
 @app.command()
 def main(
     task: str = typer.Option(
@@ -153,7 +207,7 @@ def main(
         help="Launch headed local Playwright with devtools and keep it open for inspection.",
     ),
 ) -> Any:
-    return run_one(
+    return _run_from_options(
         task=task,
         task_id=task_id,
         start_url=start_url,

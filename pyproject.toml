@@ -19,6 +19,11 @@ dependencies = [
     "platformdirs>=4.0",
 ]
 
+[project.optional-dependencies]
+android = [
+    "uiautomator2>=3.0",
+]
+
 [project.scripts]
 webwright = "webwright.run.cli:app"
 
