@@ -27,6 +27,14 @@ def _resolve_config_path(spec: str) -> Path | None:
     builtin_path = builtin_config_dir / spec
     if builtin_path.exists():
         return builtin_path
+    if not spec.endswith((".yaml", ".yml")):
+        yaml_spec = f"{spec}.yaml"
+        path_yaml = Path(yaml_spec).expanduser()
+        if path_yaml.exists():
+            return path_yaml
+        builtin_yaml = builtin_config_dir / yaml_spec
+        if builtin_yaml.exists():
+            return builtin_yaml
     return None
 
 

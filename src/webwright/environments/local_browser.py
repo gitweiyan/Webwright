@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, field_validator
 _BROWSER_MODES = {"local_cdp", "local_launch", "local_persistent"}
 _DEFAULT_LOCAL_CDP_URL = "http://127.0.0.1:9222"
 _DEFAULT_LOCAL_CDP_USER_DATA_DIR = Path("~/.cache/webwright/edge-profile")
+_LOCALHOST_NO_PROXY_HOSTS = ("127.0.0.1", "localhost", "::1")
 _CHROMIUM_EXECUTABLE_CANDIDATES = (
     "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
     "~/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge",
@@ -37,6 +38,17 @@ _LOCAL_CDP_OPENER = build_opener(ProxyHandler({}))
 
 def _urlopen_local_cdp(url_or_request: str | Request, *, timeout: float):
     return _LOCAL_CDP_OPENER.open(url_or_request, timeout=timeout)
+
+
+def _ensure_localhost_no_proxy() -> None:
+    """Ensure localhost CDP is not routed through http_proxy (common with local VPN/clash)."""
+    for var in ("NO_PROXY", "no_proxy"):
+        current = os.environ.get(var, "")
+        existing = {part.strip() for part in current.split(",") if part.strip()}
+        missing = [host for host in _LOCALHOST_NO_PROXY_HOSTS if host not in existing]
+        if not missing:
+            continue
+        os.environ[var] = ",".join([*existing, *missing])
 
 
 def _local_cdp_origin(cdp_url: str) -> str:
@@ -312,6 +324,9 @@ class LocalBrowserEnvironment:
 
         if self._page is not None and self._context is not None:
             return
+
+        if self.config.browser_mode == "local_cdp":
+            _ensure_localhost_no_proxy()
 
         self._playwright = await async_playwright().start()
         chromium = self._playwright.chromium

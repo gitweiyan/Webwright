@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 from typing import Any
 
@@ -61,6 +62,50 @@ def _serialize_response_input(messages: list[dict[str, Any]]) -> list[dict[str, 
     return serialized
 
 
+def _serialize_chat_content_part(part: dict[str, Any]) -> dict[str, Any] | None:
+    part_type = part.get("type")
+    if part_type in {"input_text", "output_text"}:
+        return {"type": "text", "text": str(part.get("text", "") or "")}
+    if part_type == "input_image":
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": str(part.get("image_url", "") or ""),
+                "detail": str(part.get("detail", "high") or "high"),
+            },
+        }
+    return None
+
+
+def _serialize_chat_messages(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    serialized: list[dict[str, Any]] = []
+    for message in messages:
+        role = message["role"]
+        if role == "exit":
+            continue
+        content = message.get("content", "")
+        if isinstance(content, str):
+            serialized.append({"role": role, "content": content})
+            continue
+        parts = [
+            serialized_part
+            for part in content
+            if isinstance(part, dict)
+            for serialized_part in [_serialize_chat_content_part(part)]
+            if serialized_part is not None
+        ]
+        if role == "assistant" or all(part.get("type") == "text" for part in parts):
+            serialized.append(
+                {
+                    "role": role,
+                    "content": "\n".join(str(part.get("text", "") or "") for part in parts),
+                }
+            )
+        else:
+            serialized.append({"role": role, "content": parts})
+    return serialized
+
+
 def _extract_response_text(payload: dict[str, Any]) -> str:
     output_text = payload.get("output_text")
     if isinstance(output_text, str) and output_text:
@@ -80,6 +125,28 @@ def _extract_response_text(payload: dict[str, Any]) -> str:
             elif isinstance(content.get("output_text"), str):
                 texts.append(content["output_text"])
     return "\n".join(texts)
+
+
+def _extract_chat_completions_text(payload: dict[str, Any]) -> str:
+    choices = payload.get("choices")
+    if not isinstance(choices, list) or not choices:
+        return ""
+    first_choice = choices[0]
+    if not isinstance(first_choice, dict):
+        return ""
+    message = first_choice.get("message", {})
+    if not isinstance(message, dict):
+        return ""
+    content = message.get("content", "")
+    if isinstance(content, str):
+        return content
+    if isinstance(content, list):
+        return "\n".join(
+            str(part.get("text", "") or "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        )
+    return ""
 
 
 def _usage_metrics_from_response_payload(payload: dict[str, Any]) -> dict[str, int]:
@@ -102,10 +169,27 @@ def _usage_metrics_from_response_payload(payload: dict[str, Any]) -> dict[str, i
     }
 
 
+def _usage_metrics_from_chat_completions(payload: dict[str, Any]) -> dict[str, int]:
+    usage = payload.get("usage")
+    if not isinstance(usage, dict):
+        usage = {}
+    return {
+        "input_tokens": _safe_int(usage.get("prompt_tokens")),
+        "output_tokens": _safe_int(usage.get("completion_tokens")),
+        "total_tokens": _safe_int(usage.get("total_tokens")),
+        "cached_input_tokens": 0,
+        "reasoning_output_tokens": 0,
+    }
+
+
 class OpenAIModelConfig(BaseModelConfig):
     model_name: OptStr = "gpt-4o"
     openai_api_key: OptStr = ""
     openai_endpoint: OptStr = "https://api.openai.com/v1/responses"
+
+
+def _is_dashscope_endpoint(endpoint: str) -> bool:
+    return "dashscope" in endpoint
 
 
 class OpenAIModel(BaseModel):
@@ -116,6 +200,14 @@ class OpenAIModel(BaseModel):
     _MAX_TRANSIENT_RETRIES = 5
     _DEFAULT_CONFIG_CLASS = OpenAIModelConfig
 
+    def __init__(self, *, config_class: type | None = None, **kwargs: Any) -> None:
+        endpoint = str(kwargs.get("openai_endpoint") or OpenAIModelConfig().openai_endpoint)
+        if not kwargs.get("openai_api_key") and _is_dashscope_endpoint(endpoint):
+            dashscope_key = os.environ.get("DASHSCOPE_API_KEY", "")
+            if dashscope_key:
+                kwargs["openai_api_key"] = dashscope_key
+        super().__init__(config_class=config_class, **kwargs)
+
     def _request_headers(self) -> dict[str, str]:
         return {
             "Content-Type": "application/json",
@@ -125,7 +217,16 @@ class OpenAIModel(BaseModel):
     def _post_url(self) -> str:
         return self.config.openai_endpoint
 
+    def _is_chat_completions_endpoint(self) -> bool:
+        return "/chat/completions" in self.config.openai_endpoint
+
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        if self._is_chat_completions_endpoint():
+            return {
+                "model": self.config.model_name,
+                "messages": _serialize_chat_messages(messages),
+                "max_tokens": self.config.max_output_tokens,
+            }
         return {
             "model": self.config.model_name,
             "input": _serialize_response_input(messages),
@@ -141,6 +242,12 @@ class OpenAIModel(BaseModel):
         }
 
     def _build_text_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        if self._is_chat_completions_endpoint():
+            return {
+                "model": self.config.model_name,
+                "messages": _serialize_chat_messages(messages),
+                "max_tokens": self.config.max_output_tokens,
+            }
         return {
             "model": self.config.model_name,
             "input": _serialize_response_input(messages),
@@ -148,10 +255,16 @@ class OpenAIModel(BaseModel):
         }
 
     def _request_metrics_input(self, payload: dict[str, Any]) -> list[dict[str, Any]]:
+        if self._is_chat_completions_endpoint():
+            return payload.get("messages") or []
         return payload.get("input") or []
 
     def _extract_text(self, payload: dict[str, Any]) -> str:
+        if self._is_chat_completions_endpoint():
+            return _extract_chat_completions_text(payload)
         return _extract_response_text(payload)
 
     def _usage_metrics_from_payload(self, payload: dict[str, Any]) -> dict[str, int]:
+        if self._is_chat_completions_endpoint():
+            return _usage_metrics_from_chat_completions(payload)
         return _usage_metrics_from_response_payload(payload)
