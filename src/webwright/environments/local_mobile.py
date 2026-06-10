@@ -13,6 +13,7 @@ from pydantic import BaseModel
 
 from webwright.devices.android_uiautomator2 import AndroidUiautomator2Driver
 from webwright.devices.snapshots import compact_android_hierarchy
+from webwright.utils.adb import list_adb_devices
 
 _DRIVER_MAPPING = {
     ("android", "uiautomator2"): AndroidUiautomator2Driver,
@@ -76,7 +77,16 @@ class LocalMobileEnvironment:
         )
 
         self._driver = self._create_driver()
-        self._driver.connect()
+        self._ensure_device_available()
+        try:
+            self._driver.connect()
+        except Exception as exc:
+            raise RuntimeError(
+                f"Failed to connect to Android device. "
+                f"Verify the device is connected and USB debugging is enabled. "
+                f"Run 'python -m webwright.run.doctor' to diagnose.\n"
+                f"Original error: {exc}"
+            ) from exc
         if self.config.app_package:
             if self.config.reset_app_on_prepare:
                 self._driver.stop_app(self.config.app_package)
@@ -93,6 +103,28 @@ class LocalMobileEnvironment:
                 f"Supported backends: {supported}"
             )
         return driver_class(serial=self.config.device_serial, connect_url=self.config.connect_url)
+
+    def _ensure_device_available(self) -> None:
+        """Check that at least one authorized Android device is connected via ADB."""
+        if self.config.platform != "android":
+            return
+        devices, error = list_adb_devices()
+        if error is not None:
+            raise RuntimeError(
+                f"Cannot check Android device status: {error}\n"
+                f"Run 'python -m webwright.run.doctor' to diagnose."
+            )
+        if not devices:
+            raise RuntimeError(
+                "No authorized Android device found via ADB.\n"
+                "Connect a device with USB debugging enabled, or start an emulator.\n"
+                "Run 'python -m webwright.run.doctor' to diagnose."
+            )
+        if self.config.device_serial and self.config.device_serial not in devices:
+            raise RuntimeError(
+                f"Configured device serial '{self.config.device_serial}' not found "
+                f"among connected devices: {', '.join(devices)}"
+            )
 
     def execute(self, action: dict[str, Any], cwd: str = "") -> dict[str, Any]:
         del cwd

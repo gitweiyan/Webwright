@@ -5,8 +5,11 @@ import subprocess
 import sys
 from importlib.util import find_spec
 from pathlib import Path
+
 from rich.console import Console
 from rich.table import Table
+
+from webwright.utils.adb import list_adb_devices
 
 console = Console()
 
@@ -94,27 +97,11 @@ def check_uiautomator2():
 
 
 def check_adb_devices():
-    try:
-        result = subprocess.run(
-            ["adb", "devices"],
-            capture_output=True,
-            text=True,
-        )
-    except FileNotFoundError:
-        return False, "adb not found\nFix: install Android platform-tools"
-    except Exception as exc:
-        return False, str(exc)
-
-    if result.returncode != 0:
-        return False, result.stderr.strip() or "adb devices failed"
-
-    device_lines = [
-        line
-        for line in result.stdout.splitlines()[1:]
-        if line.strip() and "\tdevice" in line
-    ]
-    if device_lines:
-        return True, f"{len(device_lines)} Android device(s) connected"
+    devices, error = list_adb_devices()
+    if error is not None:
+        return False, error
+    if devices:
+        return True, f"{len(devices)} Android device(s) connected"
     return False, "no authorized Android devices found\nFix: connect a device and enable USB debugging"
 
 
@@ -145,6 +132,8 @@ CHECKS = [
     ("Chromium", check_chromium),
     ("Screenshot", check_screenshot),
     ("OpenAI Key", check_openai_key),
+    ("uiautomator2", check_uiautomator2),
+    ("ADB devices", check_adb_devices),
     ("Plugins", check_plugin_manifests),
 ]
 
