@@ -26,7 +26,10 @@ model:
   action_field: python_code
   attach_observation_screenshot: true
   observation_template: |
-    Observation:
+    {% if action_history %}Recent actions:
+    {{ action_history }}
+
+    {% endif %}Observation:
     Status: {{ 'ok' if observation.success else 'error' }}
     Platform: {{ observation.platform }}
     Backend: {{ observation.backend }}
@@ -76,6 +79,11 @@ environment:
 agent:
   require_self_reflection_success: false
   keep_last_n_observations: 3
+  attach_action_history: true
+  action_history_steps: 8
+  repeat_action_warning_threshold: 2
+  max_format_errors_without_progress: 6
+  keep_last_n_interrupt_messages: 1
   summary_user_prompt: |
     You are about to have your working context compacted to save tokens.
 
@@ -109,9 +117,10 @@ agent:
     The harness has already connected to the Android device. Your `python_code` step receives:
     - `device`: the raw uiautomator2 device object.
     - `driver`: a helper adapter with methods such as `click_text`, `click_desc`, `click_resource_id`,
-      `click_text_contains`, `click_if_text`, `click_search_bar`, `exists_text`, `wait_text`,
-      `set_selector_text`, `scroll_to_text`, `click_xpath`, `selector`, `xpath`, `click`, `swipe`,
-      `swipe_ext`, `press`, `input_text`, `launch_app`, `current_app`, `window_size`, and `snapshot_text`.
+      `click_text_contains`, `click_if_text`, `click_search_bar`, `submit_input`, `exists_text`,
+      `wait_text`, `set_selector_text`, `scroll_to_text`, `click_xpath`, `selector`, `xpath`, `click`,
+      `swipe`, `swipe_ext`, `press`, `input_text`, `launch_app`, `current_app`, `window_size`, and
+      `snapshot_text`.
     - `task`: the task metadata.
     - `asyncio`: available for sleeps and async helper code.
 
@@ -137,20 +146,18 @@ agent:
     driver.press("back")
     ```
 
-    For in-app search tasks, typing alone is NOT enough — autocomplete/suggestion rows are not the
-    final results page. After entering the query, ALWAYS submit search in the same step when possible:
+    For text-entry tasks (search, forms), typing alone may not commit the value. After `set_text` /
+    `set_selector_text`, call `driver.submit_input()` in the same step to press a visible submit
+    button ("搜索", "Search", "Go", etc.) or fall back to Enter:
     ```
-    driver.click_search_bar(resource_id="com.example:id/rcSearchContainer")
-    driver.set_selector_text("dapeng", className="android.widget.EditText")
-    if driver.click_if_text("搜索"):
-        pass
-    else:
-        driver.press("enter")
+    driver.click_search_bar(resource_id="com.example:id/search_container")
+    driver.set_selector_text("query", className="android.widget.EditText")
+    driver.submit_input()
     print(driver.current_app())
     print(driver.snapshot_text(max_chars=4000))
     ```
-    Prefer the visible search button (text like "搜索" / "Search", or resource-id *search_btn*) over
-    `press("enter")` when both exist. Only set `done=true` after the full results page is visible.
+    Autocomplete/suggestion lists are not final results — only set `done=true` after the committed
+    results page is visible.
 
     When helpers are not enough, use official uiautomator2 selectors through `device`:
     ```
@@ -208,8 +215,8 @@ agent:
     - Some controls are hidden behind drawers, tabs, scroll views, bottom sheets, or overflow menus. Open or
       scroll those regions before deciding a control is unavailable.
     - If an app exposes a dedicated control for a requirement, use that control instead of only typing a broad search query.
-    - For search tasks: after typing in an EditText, submit the query (tap "搜索"/"Search" or `driver.press("enter")`).
-      Do NOT treat autocomplete/suggestion dropdowns as final results — wait for the full results page.
+    - For text-entry tasks: after typing in an EditText, call `driver.submit_input()` in the same step.
+      Do NOT treat autocomplete/suggestion dropdowns as final results — wait for the committed page.
     - Set `"done": true` ONLY when the task is fully satisfied. Declare done in a separate response with empty `python_code`.
 
     ## Common Pitfalls
@@ -222,9 +229,8 @@ agent:
         3. resource-id such as *SearchContainer*, *search_bar*, *ivSearch*
       Use `driver.click_search_bar(resource_id=...)` or click the container — never click hint text
       when a container or icon is available.
-    - Typing a query shows suggestions, NOT the final search results. After `set_text` / `set_selector_text`,
-      submit with `driver.click_text("搜索")`, `driver.click_resource_id("...search_btn...")`, or
-      `driver.press("enter")`, then verify the results page (not just the suggestion list) before summarizing.
+    - Typing a query may only show suggestions. After `set_text` / `set_selector_text`, always call
+      `driver.submit_input()` and verify the committed results page before summarizing.
     - After EVERY action that should change screens, print verification:
         print(driver.current_app())
         print(driver.snapshot_text(max_chars=3000))
@@ -264,8 +270,8 @@ agent:
 
     ```
     {
-      "thought": "Open search, type the query, submit to reach full results (not just suggestions).",
-      "python_code": "driver.click_search_bar(resource_id=\"com.example:id/rcSearchContainer\")\ndriver.set_selector_text(\"dapeng\", className=\"android.widget.EditText\")\nif not driver.click_if_text(\"搜索\"):\n    driver.press(\"enter\")\nprint(driver.current_app())\nprint(driver.snapshot_text(max_chars=4000))",
+      "thought": "Open search, type the query, submit to reach the committed results page.",
+      "python_code": "driver.click_search_bar(resource_id=\"com.example:id/search_container\")\ndriver.set_selector_text(\"query\", className=\"android.widget.EditText\")\ndriver.submit_input()\nprint(driver.current_app())\nprint(driver.snapshot_text(max_chars=4000))",
       "done": false,
       "final_response": ""
     }
@@ -283,7 +289,7 @@ agent:
     <instructions>
     Drive the live Android device one step at a time. Use the UI snapshot, screenshot, resource-id,
     text, description, and bounds from observations to choose robust actions. For search tasks, after
-    entering text always submit (tap "搜索"/"Search" or press enter) and confirm the full results page
-    before summarizing — suggestion/autocomplete rows are not enough. When the task is complete,
+    entering text always call `driver.submit_input()` in the same step and confirm the committed
+    results page before summarizing — suggestion/autocomplete rows are not enough. When the task is complete,
     set `done=true` in a separate response and put the answer in `final_response`.
     </instructions>

@@ -143,6 +143,22 @@ class AndroidUiautomator2Driver:
         """Click text only if present; return False instead of raising."""
         return self.click_if_exists(text=text, timeout=timeout)
 
+    def submit_input(self, *, timeout: float = 3.0) -> bool:
+        """Submit the active text field using common affordances (no app-specific ids)."""
+        for label in ("搜索", "Search", "Go", "GO", "确定", "完成", "查询"):
+            if self.click_if_exists(text=label, timeout=timeout):
+                return True
+        for label in ("Search", "搜索"):
+            if self.click_if_exists(descriptionContains=label, timeout=timeout):
+                return True
+        if self.click_if_exists(className="android.widget.Button", timeout=timeout):
+            return True
+        try:
+            self.press("enter")
+            return True
+        except Exception:
+            return False
+
     def click_search_bar(
         self,
         *,

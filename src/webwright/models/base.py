@@ -14,6 +14,7 @@ from jinja2 import StrictUndefined, Template
 from pydantic import BaseModel as PydanticBaseModel, BeforeValidator, field_validator
 
 from webwright.exceptions import FormatError
+from webwright.utils.json_output import salvage_json_output
 from webwright.utils.logging import append_runtime_log
 from webwright.utils.runtime import run_async
 
@@ -105,6 +106,9 @@ def _is_transient_http_error(exc: BaseException | None) -> bool:
 
 
 def parse_json_output(raw: str, *, action_field: str = "bash_command") -> dict[str, Any]:
+    salvaged = salvage_json_output(raw, action_field=action_field)
+    if salvaged is not None:
+        return salvaged
     try:
         parsed = json.loads(raw)
     except json.JSONDecodeError as exc:

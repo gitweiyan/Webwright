@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -43,6 +44,15 @@ class AgentConfig(BaseModel):
     # to bound context growth in browser-driven modes. Any value <= 0 disables pruning
     # (default). Opt in per config (e.g. local_browser.yaml sets this to 1).
     keep_last_n_observations: int = -1
+    attach_action_history: bool = False
+    action_history_steps: int = 8
+    # Warn when the same python_code reaches the same activity this many times in a row
+    # (0 disables). Opt in for mobile loops (e.g. local_android.yaml sets 2).
+    repeat_action_warning_threshold: int = 0
+    # Stop the run after this many consecutive JSON format errors without a successful device step.
+    max_format_errors_without_progress: int = 6
+    # Keep only the last N FormatError / RepeatActionWarning messages in context (0 disables).
+    keep_last_n_interrupt_messages: int = 1
     output_path: Path | None = None
 
 
@@ -80,6 +90,37 @@ def _markdown_code_fence_language(*, bash_command_text: str, python_code_text: s
     return ""
 
 
+def _observation_activity(observation: dict[str, Any]) -> str:
+    current_app = observation.get("current_app", {})
+    if isinstance(current_app, dict):
+        return str(current_app.get("activity") or "")
+    return ""
+
+
+def _truncate_action_code(code: str, *, max_chars: int = 200) -> str:
+    text = code.strip()
+    if len(text) <= max_chars:
+        return text
+    return text[: max_chars - 3] + "..."
+
+
+_INTERRUPT_TYPES = frozenset({"FormatError", "RepeatActionWarning"})
+
+_OBSERVATION_ONLY_LINE = re.compile(
+    r"^\s*(print\(|"
+    r"driver\.(?:current_app|snapshot_text|wait_idle|window_size|get_info)\s*\(|"
+    r"driver\.exists(?:_text|_desc|_resource_id)?\s*\(|"
+    r"device\([^)]+\)\.exists\b)",
+)
+
+
+def _is_observation_only_code(code: str) -> bool:
+    lines = [line for line in code.strip().splitlines() if line.strip() and not line.strip().startswith("#")]
+    if not lines:
+        return True
+    return all(_OBSERVATION_ONLY_LINE.match(line) for line in lines)
+
+
 class DefaultAgent:
     def __init__(self, model: Model, env: Environment, *, config_class: type = AgentConfig, **kwargs):
         self.config = config_class(**kwargs)
@@ -89,6 +130,7 @@ class DefaultAgent:
         self.extra_template_vars: dict[str, Any] = {}
         self.n_calls = 0
         self.n_format_errors = 0
+        self._format_errors_without_progress = 0
 
     def _debug_dir(self) -> Path | None:
         if self.config.output_path is None:
@@ -270,7 +312,27 @@ class DefaultAgent:
     def add_messages(self, *messages: dict[str, Any]) -> list[dict[str, Any]]:
         self.messages.extend(messages)
         self._prune_old_observation_aria_snapshots()
+        self._prune_interrupt_messages()
         return list(messages)
+
+    def _prune_interrupt_messages(self) -> None:
+        keep = self.config.keep_last_n_interrupt_messages
+        if keep <= 0:
+            return
+        interrupt_indices = [
+            index
+            for index, message in enumerate(self.messages)
+            if message.get("extra", {}).get("interrupt_type") in _INTERRUPT_TYPES
+        ]
+        if len(interrupt_indices) <= keep:
+            return
+        placeholder = "(Earlier interrupt pruned to save context.)"
+        for index in interrupt_indices[:-keep]:
+            message = self.messages[index]
+            message["content"] = placeholder
+            extra = message.get("extra", {})
+            if isinstance(extra, dict):
+                extra.pop("model_response", None)
 
     def _prune_old_observation_aria_snapshots(self) -> None:
         n = self.config.keep_last_n_observations
@@ -301,6 +363,84 @@ class DefaultAgent:
                 elif isinstance(content, str) and snapshot_text in content:
                     msg["content"] = content.replace(snapshot_text, placeholder)
                 obs[key] = ""
+
+    def _action_step_records(self) -> list[dict[str, Any]]:
+        records: list[dict[str, Any]] = []
+        pending_code = ""
+        for msg in self.messages:
+            if msg.get("role") == "assistant":
+                extra = msg.get("extra", {})
+                actions = extra.get("actions", [])
+                codes = [_python_action_text(action) or _action_text(action) for action in actions]
+                pending_code = "\n".join(code for code in codes if code).strip()
+                continue
+            if msg.get("role") != "user":
+                continue
+            observation = msg.get("extra", {}).get("observation")
+            if not isinstance(observation, dict) or not pending_code:
+                continue
+            records.append(
+                {
+                    "code": pending_code,
+                    "success": bool(observation.get("success")),
+                    "activity": _observation_activity(observation),
+                    "activity_changed": bool(observation.get("activity_changed")),
+                }
+            )
+            pending_code = ""
+        return records
+
+    def _recent_action_history(self, limit: int) -> str:
+        records = self._action_step_records()
+        if not records or limit <= 0:
+            return ""
+        window = records[-limit:]
+        offset = len(records) - len(window)
+        lines: list[str] = []
+        for index, record in enumerate(window, start=offset + 1):
+            status = "ok" if record["success"] else "error"
+            activity = record["activity"] or "(unknown)"
+            code = _truncate_action_code(record["code"])
+            lines.append(f"Step {index}: {code} -> {status}, activity={activity}")
+        return "\n".join(lines)
+
+    def _repeat_action_warning(
+        self,
+        message: dict[str, Any],
+        outputs: list[dict[str, Any]],
+    ) -> str | None:
+        threshold = self.config.repeat_action_warning_threshold
+        if threshold <= 0 or not outputs:
+            return None
+        actions = message.get("extra", {}).get("actions", [])
+        codes = [_python_action_text(action) or _action_text(action) for action in actions]
+        code = "\n".join(item for item in codes if item).strip()
+        if not code or _is_observation_only_code(code):
+            return None
+
+        observation = outputs[0].get("observation", {})
+        if not isinstance(observation, dict):
+            return None
+        activity_after = _observation_activity(observation)
+
+        prior_records = self._action_step_records()
+        recent = prior_records[-max(threshold * 3, 8) :]
+        stuck_matches = sum(
+            1
+            for record in recent
+            if record["code"].strip() == code
+            and record["activity"] == activity_after
+            and record["success"]
+        )
+        if stuck_matches < threshold - 1:
+            return None
+
+        return (
+            f"Loop detected: the same action already reached activity "
+            f"{activity_after or 'unknown'} {stuck_matches + 1} times without progress:\n"
+            f"  {code}\n"
+            "Do NOT repeat this action. Choose a different selector or strategy."
+        )
 
     def _compact_history(self) -> None:
         """Summarize the running transcript via an LLM call and reset messages to [system, summary].
@@ -345,6 +485,7 @@ class DefaultAgent:
         self.messages = []
         self.n_calls = 0
         self.n_format_errors = 0
+        self._format_errors_without_progress = 0
         self.add_messages(
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
@@ -368,6 +509,26 @@ class DefaultAgent:
             except InterruptAgentFlow as exc:
                 if isinstance(exc, FormatError):
                     self.n_format_errors += 1
+                    self._format_errors_without_progress += 1
+                    self.add_messages(*exc.messages)
+                    limit = self.config.max_format_errors_without_progress
+                    if limit > 0 and self._format_errors_without_progress >= limit:
+                        self.add_messages(
+                            self.model.format_message(
+                                role="exit",
+                                content=(
+                                    f"Stopped after {self._format_errors_without_progress} consecutive "
+                                    "JSON format errors without executing a device step. "
+                                    "Respond with a single strict JSON object on the next run."
+                                ),
+                                extra={
+                                    "exit_status": "FormatErrorExceeded",
+                                    "submission": "",
+                                },
+                            )
+                        )
+                        break
+                    continue
                 self.add_messages(*exc.messages)
             finally:
                 self.save(self.config.output_path)
@@ -425,8 +586,15 @@ class DefaultAgent:
                 )
             )
         outputs = [self.env.execute(action) for action in extra.get("actions", [])]
+        self._format_errors_without_progress = 0
         self._write_debug_step_artifact(step_index=self.n_calls, assistant_message=message, outputs=outputs)
-        observation_messages = self.model.format_observation_messages(message, outputs, self.get_template_vars())
+        template_vars = self.get_template_vars()
+        if self.config.attach_action_history:
+            template_vars = {
+                **template_vars,
+                "action_history": self._recent_action_history(self.config.action_history_steps),
+            }
+        observation_messages = self.model.format_observation_messages(message, outputs, template_vars)
         if self.config.attach_instance_template_after_observation:
             observation_messages.append(
                 self.model.format_message(role="user", content=self._render_template(self.config.instance_template))
@@ -435,7 +603,17 @@ class DefaultAgent:
             plan_message = self._plan_md_message()
             if plan_message is not None:
                 observation_messages.append(plan_message)
-        return self.add_messages(*observation_messages)
+        added = self.add_messages(*observation_messages)
+        repeat_warning = self._repeat_action_warning(message, outputs)
+        if repeat_warning is not None:
+            return self.add_messages(
+                self.model.format_message(
+                    role="user",
+                    content=repeat_warning,
+                    extra={"interrupt_type": "RepeatActionWarning"},
+                )
+            )
+        return added
 
     def serialize(self, *extra_dicts) -> dict[str, Any]:
         last_message = self.messages[-1] if self.messages else {}

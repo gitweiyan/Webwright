@@ -111,6 +111,16 @@ def test_android_driver_selector_helpers_call_uiautomator_shapes():
     assert driver.window_size() == (1080, 2400)
 
 
+def test_android_driver_submit_input_prefers_visible_submit_label():
+    raw = FakeDevice()
+    driver = AndroidUiautomator2Driver()
+    driver.raw = raw
+
+    assert driver.submit_input() is True
+    assert raw.objects[-1].kwargs == {"text": "搜索"}
+    assert raw.objects[-1].calls == [("click_exists", 3)]
+
+
 def test_android_driver_click_if_text():
     raw = FakeDevice()
     driver = AndroidUiautomator2Driver()
