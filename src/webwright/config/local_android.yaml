@@ -7,6 +7,12 @@
 #     --task-id android_settings_wifi \
 #     -o outputs/android
 #
+#   python -m webwright.run.cli \
+#     -c base.yaml -c local_android.yaml -c model_qwen_vision.yaml \
+#     -t "Open sohu video, search dapeng, summarise the result" \
+#     --task-id android_sohu_search \
+#     -o outputs/android
+#
 # Prerequisites:
 #   pip install -e .[android]
 #   adb devices
@@ -25,7 +31,13 @@ model:
     Platform: {{ observation.platform }}
     Backend: {{ observation.backend }}
     Current app: {{ observation.current_app.package }} / {{ observation.current_app.activity }}
-    {% if observation.exception %}Exception:
+    {% if observation.previous_activity %}Previous activity: {{ observation.previous_activity }}
+    Activity changed since last step: {{ 'yes' if observation.activity_changed else 'no' }}
+    {% endif %}{% if not observation.success %}
+    The last action FAILED. Inspect the exception and UI snapshot. Do not retry the same selector.
+    {% endif %}{% if observation.success and not observation.python_output %}
+    Note: no python_output was printed. Consider printing driver.current_app() after actions.
+    {% endif %}{% if observation.exception %}Exception:
     {{ observation.exception }}
     {% endif %}{% if observation.python_output %}Python output:
     {{ observation.python_output }}
@@ -63,7 +75,7 @@ environment:
 
 agent:
   require_self_reflection_success: false
-  keep_last_n_observations: 1
+  keep_last_n_observations: 3
   summary_user_prompt: |
     You are about to have your working context compacted to save tokens.
 
@@ -97,9 +109,9 @@ agent:
     The harness has already connected to the Android device. Your `python_code` step receives:
     - `device`: the raw uiautomator2 device object.
     - `driver`: a helper adapter with methods such as `click_text`, `click_desc`, `click_resource_id`,
-      `click_text_contains`, `exists_text`, `wait_text`, `set_selector_text`, `scroll_to_text`, `click_xpath`,
-      `selector`, `xpath`, `click`, `swipe`, `swipe_ext`, `press`, `input_text`, `launch_app`,
-      `current_app`, `window_size`, and `snapshot_text`.
+      `click_text_contains`, `click_if_text`, `click_search_bar`, `exists_text`, `wait_text`,
+      `set_selector_text`, `scroll_to_text`, `click_xpath`, `selector`, `xpath`, `click`, `swipe`,
+      `swipe_ext`, `press`, `input_text`, `launch_app`, `current_app`, `window_size`, and `snapshot_text`.
     - `task`: the task metadata.
     - `asyncio`: available for sleeps and async helper code.
 
@@ -113,12 +125,32 @@ agent:
     print(driver.snapshot_text(max_chars=6000))
     driver.click_text("Settings")
     driver.click_text_contains("Wi-Fi")
+    driver.click_if_text("跳过广告")
+    driver.click_if_text("重新再试")
     driver.click_desc("Search")
     driver.click_resource_id("com.android.settings:id/search_action_bar")
+    driver.click_search_bar(resource_id="com.example:id/rcSearchContainer")
     driver.set_selector_text("hello", resourceId="com.demo:id/input")
+    driver.click_text("搜索")
+    driver.press("enter")
     driver.scroll_to_text("About phone")
     driver.press("back")
     ```
+
+    For in-app search tasks, typing alone is NOT enough — autocomplete/suggestion rows are not the
+    final results page. After entering the query, ALWAYS submit search in the same step when possible:
+    ```
+    driver.click_search_bar(resource_id="com.example:id/rcSearchContainer")
+    driver.set_selector_text("dapeng", className="android.widget.EditText")
+    if driver.click_if_text("搜索"):
+        pass
+    else:
+        driver.press("enter")
+    print(driver.current_app())
+    print(driver.snapshot_text(max_chars=4000))
+    ```
+    Prefer the visible search button (text like "搜索" / "Search", or resource-id *search_btn*) over
+    `press("enter")` when both exist. Only set `done=true` after the full results page is visible.
 
     When helpers are not enough, use official uiautomator2 selectors through `device`:
     ```
@@ -176,7 +208,31 @@ agent:
     - Some controls are hidden behind drawers, tabs, scroll views, bottom sheets, or overflow menus. Open or
       scroll those regions before deciding a control is unavailable.
     - If an app exposes a dedicated control for a requirement, use that control instead of only typing a broad search query.
+    - For search tasks: after typing in an EditText, submit the query (tap "搜索"/"Search" or `driver.press("enter")`).
+      Do NOT treat autocomplete/suggestion dropdowns as final results — wait for the full results page.
     - Set `"done": true` ONLY when the task is fully satisfied. Declare done in a separate response with empty `python_code`.
+
+    ## Common Pitfalls
+    - Read the CURRENT observation before acting. Do NOT assume splash ads, login walls, or permission
+      dialogs exist unless they appear in the UI snapshot or screenshot.
+    - Search bars often have hint/placeholder text (e.g. tv_search_hint). Clicking hint text may navigate
+      to a user/topic page instead of opening search. Prefer:
+        1. the clickable search CONTAINER (parent FrameLayout with clickable=true)
+        2. the search icon (content-desc / ImageView)
+        3. resource-id such as *SearchContainer*, *search_bar*, *ivSearch*
+      Use `driver.click_search_bar(resource_id=...)` or click the container — never click hint text
+      when a container or icon is available.
+    - Typing a query shows suggestions, NOT the final search results. After `set_text` / `set_selector_text`,
+      submit with `driver.click_text("搜索")`, `driver.click_resource_id("...search_btn...")`, or
+      `driver.press("enter")`, then verify the results page (not just the suggestion list) before summarizing.
+    - After EVERY action that should change screens, print verification:
+        print(driver.current_app())
+        print(driver.snapshot_text(max_chars=3000))
+      If activity/package did not change as expected, try a DIFFERENT selector — do not repeat.
+    - For transient error overlays (network error, retry, skip ad), use `driver.click_if_text(...)` or
+      `wait_gone` before interacting with main content.
+    - On the launcher: scan the current UI snapshot for the target app icon BEFORE swiping or opening
+      the app drawer.
 
     ## Examples
     ```
@@ -206,6 +262,15 @@ agent:
     }
     ```
 
+    ```
+    {
+      "thought": "Open search, type the query, submit to reach full results (not just suggestions).",
+      "python_code": "driver.click_search_bar(resource_id=\"com.example:id/rcSearchContainer\")\ndriver.set_selector_text(\"dapeng\", className=\"android.widget.EditText\")\nif not driver.click_if_text(\"搜索\"):\n    driver.press(\"enter\")\nprint(driver.current_app())\nprint(driver.snapshot_text(max_chars=4000))",
+      "done": false,
+      "final_response": ""
+    }
+    ```
+
   instance_template: |
     Task: {{ task }}
     {% if task_id %}Task ID: {{ task_id }}
@@ -217,6 +282,8 @@ agent:
 
     <instructions>
     Drive the live Android device one step at a time. Use the UI snapshot, screenshot, resource-id,
-    text, description, and bounds from observations to choose robust actions. When the task is complete,
+    text, description, and bounds from observations to choose robust actions. For search tasks, after
+    entering text always submit (tap "搜索"/"Search" or press enter) and confirm the full results page
+    before summarizing — suggestion/autocomplete rows are not enough. When the task is complete,
     set `done=true` in a separate response and put the answer in `final_response`.
     </instructions>

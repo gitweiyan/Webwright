@@ -139,6 +139,37 @@ class AndroidUiautomator2Driver:
         obj = self.selector(**kwargs)
         return bool(obj.click_exists(timeout=timeout))
 
+    def click_if_text(self, text: str, *, timeout: float = 2.0) -> bool:
+        """Click text only if present; return False instead of raising."""
+        return self.click_if_exists(text=text, timeout=timeout)
+
+    def click_search_bar(
+        self,
+        *,
+        resource_id: str | None = None,
+        desc: str | None = None,
+        timeout: float = 5.0,
+    ) -> None:
+        """Open search via container or icon — not hint/placeholder text."""
+        if resource_id:
+            self.click_resource_id(resource_id, timeout=timeout)
+            return
+        if desc:
+            self.click_desc(desc, timeout=timeout)
+            return
+        for expression in (
+            '//*[contains(@resource-id, "Search") and @clickable="true"]',
+            '//*[contains(@content-desc, "搜索") and @clickable="true"]',
+            '//*[@class="android.widget.EditText"]',
+        ):
+            obj = self._device().xpath(expression)
+            if obj.exists:
+                obj.click(timeout=timeout)
+                return
+        raise RuntimeError(
+            "No search bar found; inspect the UI snapshot for a search container resource-id."
+        )
+
     def click_xpath(self, expression: str, *, timeout: float = 10.0) -> None:
         self._device().xpath(expression).click(timeout=timeout)
 

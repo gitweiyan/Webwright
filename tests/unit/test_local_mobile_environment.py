@@ -87,3 +87,33 @@ def test_local_mobile_environment_executes_python_code(tmp_path, monkeypatch):
     assert "Login" in observation["ui_snapshot"]
     assert Path(observation["screenshot_path"]).exists()
     assert Path(observation["hierarchy_path"]).exists()
+
+
+class ActivityTrackingDriver(FakeDriver):
+    def __init__(self, *, serial=None, connect_url=None):
+        super().__init__(serial=serial, connect_url=connect_url)
+        self._activity_calls = 0
+
+    def current_app(self):
+        self._activity_calls += 1
+        if self._activity_calls == 1:
+            return {"package": "com.demo", "activity": ".HomeActivity"}
+        return {"package": "com.demo", "activity": ".SearchActivity"}
+
+
+def test_local_mobile_observation_tracks_activity_change(tmp_path, monkeypatch):
+    monkeypatch.setitem(local_mobile._DRIVER_MAPPING, ("android", "fake"), ActivityTrackingDriver)
+    env = local_mobile.LocalMobileEnvironment(
+        platform="android",
+        backend="fake",
+        output_dir=tmp_path,
+    )
+
+    env.prepare(task="open search")
+    result = env.execute({"python_code": "driver.click(10, 20)"})
+    env.close()
+
+    observation = result["observation"]
+    assert observation["previous_activity"] == ".HomeActivity"
+    assert observation["current_app"]["activity"] == ".SearchActivity"
+    assert observation["activity_changed"] is True

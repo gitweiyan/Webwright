@@ -49,6 +49,7 @@ class FakeScrollableObject(FakeUiObject):
 class FakeXpath:
     def __init__(self):
         self.calls = []
+        self.exists = False
 
     def click(self, timeout=None):
         self.calls.append(("click", timeout))
@@ -108,6 +109,45 @@ def test_android_driver_selector_helpers_call_uiautomator_shapes():
     assert raw.xpath_objects[-1].calls == [("click", 7)]
 
     assert driver.window_size() == (1080, 2400)
+
+
+def test_android_driver_click_if_text():
+    raw = FakeDevice()
+    driver = AndroidUiautomator2Driver()
+    driver.raw = raw
+
+    assert driver.click_if_text("重新再试", timeout=2) is True
+    assert raw.objects[-1].kwargs == {"text": "重新再试"}
+    assert raw.objects[-1].calls == [("click_exists", 2)]
+
+
+def test_android_driver_click_search_bar_prefers_resource_id():
+    raw = FakeDevice()
+    driver = AndroidUiautomator2Driver()
+    driver.raw = raw
+
+    driver.click_search_bar(resource_id="com.sohu.sohuvideo:id/rcSearchContainer")
+    assert raw.objects[-1].kwargs == {"resourceId": "com.sohu.sohuvideo:id/rcSearchContainer"}
+    assert raw.objects[-1].calls == [("click", 5.0)]
+
+
+def test_android_driver_click_search_bar_xpath_fallback():
+    raw = FakeDevice()
+    driver = AndroidUiautomator2Driver()
+    driver.raw = raw
+
+    def xpath(expression):
+        obj = FakeXpath()
+        obj.expression = expression
+        obj.exists = expression.startswith('//*[contains(@resource-id, "Search")')
+        raw.xpath_objects.append(obj)
+        return obj
+
+    raw.xpath = xpath
+
+    driver.click_search_bar()
+    assert raw.xpath_objects[0].expression == '//*[contains(@resource-id, "Search") and @clickable="true"]'
+    assert raw.xpath_objects[0].calls == [("click", 5.0)]
 
 
 def test_android_driver_keyboard_helpers():

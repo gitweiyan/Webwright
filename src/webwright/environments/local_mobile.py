@@ -136,6 +136,13 @@ class LocalMobileEnvironment:
         self._step_python_code = str(action.get("python_code", "") or "")
         self._persist_step_code(self._step_python_code)
 
+        activity_before = ""
+        if self._driver is not None:
+            try:
+                activity_before = self._driver.current_app().get("activity", "")
+            except Exception:
+                activity_before = ""
+
         success = True
         exception_text = ""
         try:
@@ -152,6 +159,7 @@ class LocalMobileEnvironment:
         observation = self._capture_observation(
             success=success,
             exception_text=exception_text,
+            activity_before=activity_before,
         )
         return {
             "output": self._step_python_output,
@@ -188,7 +196,13 @@ class LocalMobileEnvironment:
             )
         self._step_python_output = buffer.getvalue()
 
-    def _capture_observation(self, *, success: bool, exception_text: str) -> dict[str, Any]:
+    def _capture_observation(
+        self,
+        *,
+        success: bool,
+        exception_text: str,
+        activity_before: str = "",
+    ) -> dict[str, Any]:
         screenshot_path: Path | None = None
         hierarchy_path: Path | None = None
         hierarchy_xml = ""
@@ -223,6 +237,13 @@ class LocalMobileEnvironment:
                 hierarchy_path = None
                 ui_snapshot = ""
 
+        activity_after = current_app.get("activity", "")
+        activity_changed = (
+            bool(activity_before)
+            and bool(activity_after)
+            and activity_before != activity_after
+        )
+
         return {
             "success": success,
             "exception": exception_text,
@@ -230,6 +251,8 @@ class LocalMobileEnvironment:
             "backend": self.config.backend,
             "device_info": device_info,
             "current_app": current_app,
+            "previous_activity": activity_before,
+            "activity_changed": activity_changed,
             "screenshot_path": str(screenshot_path) if screenshot_path is not None else "",
             "hierarchy_path": str(hierarchy_path) if hierarchy_path is not None else "",
             "ui_snapshot": ui_snapshot,
