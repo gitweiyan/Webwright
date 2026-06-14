@@ -5,7 +5,7 @@ import re
 from typing import Any
 
 
-_FENCED_JSON = re.compile(r"```(?:json)?\s*(\{.*?\})\s*```", re.DOTALL | re.IGNORECASE)
+_FENCE_PATTERN = re.compile(r"```(?:json)?\s*(.*?)\s*```", re.DOTALL | re.IGNORECASE)
 
 
 def _balanced_json_object(text: str, start: int) -> str | None:
@@ -35,25 +35,59 @@ def _balanced_json_object(text: str, start: int) -> str | None:
     return None
 
 
+def _fenced_json_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    for match in _FENCE_PATTERN.finditer(text):
+        fenced = match.group(1).strip()
+        if not fenced:
+            continue
+        try:
+            json.loads(fenced)
+            candidates.append(fenced)
+            continue
+        except json.JSONDecodeError:
+            pass
+        start = fenced.find("{")
+        while start >= 0:
+            candidate = _balanced_json_object(fenced, start)
+            if candidate is not None:
+                candidates.append(candidate)
+                break
+            start = fenced.find("{", start + 1)
+    return candidates
+
+
+def _unfenced_json_candidates(text: str) -> list[str]:
+    candidates: list[str] = []
+    start = text.find("{")
+    while start >= 0:
+        candidate = _balanced_json_object(text, start)
+        if candidate is not None:
+            candidates.append(candidate)
+        start = text.find("{", start + 1)
+    return candidates
+
+
+def _json_object_candidates(text: str) -> list[str]:
+    fenced = _fenced_json_candidates(text)
+    if fenced:
+        return fenced
+    return _unfenced_json_candidates(text)
+
+
 def extract_json_object(raw: str) -> str | None:
     text = raw.strip()
     if not text:
         return None
 
-    match = _FENCED_JSON.search(text)
-    if match:
-        return match.group(1).strip()
-
     if text.startswith("{") and text.endswith("}"):
         return text
 
-    start = text.find("{")
-    while start >= 0:
-        candidate = _balanced_json_object(text, start)
-        if candidate is not None:
-            return candidate
-        start = text.find("{", start + 1)
-    return None
+    candidates = _json_object_candidates(text)
+    if not candidates:
+        return None
+    # Prefer the last object: models often lead with prose and end with the JSON payload.
+    return candidates[-1]
 
 
 def salvage_json_output(raw: str, *, action_field: str = "bash_command") -> dict[str, Any] | None:

@@ -25,3 +25,36 @@ def test_parse_json_output_falls_back_to_salvage():
 
 def test_extract_json_object_returns_none_for_plain_prose():
     assert extract_json_object("I will click the search button next.") is None
+
+
+def test_extract_json_object_prefers_trailing_json_after_prose():
+    raw = (
+        "I need to create the config next.\n"
+        '{"thought": "write plan", "bash_command": "echo ok > plan.md", "done": false, "final_response": ""}'
+    )
+    assert extract_json_object(raw) == raw.split("\n", 1)[1]
+
+
+def test_salvage_json_from_nested_markdown_fence():
+    raw = """Now I need to create self_reflect_config.json.
+```json
+{
+  "thought": "create config",
+  "bash_command": "echo '{\\"key\\": \\"value\\"}' > self_reflect_config.json",
+  "done": false,
+  "final_response": ""
+}
+```"""
+    parsed = salvage_json_output(raw, action_field="bash_command")
+    assert parsed is not None
+    assert "self_reflect_config.json" in parsed["bash_command"]
+
+
+def test_salvage_json_from_prose_then_fenced_block():
+    raw = """Here is my response.
+```json
+{"thought": "tap", "bash_command": "ls plan.md", "done": false, "final_response": ""}
+```"""
+    parsed = salvage_json_output(raw, action_field="bash_command")
+    assert parsed is not None
+    assert parsed["bash_command"] == "ls plan.md"

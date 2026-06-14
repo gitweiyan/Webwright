@@ -38,12 +38,8 @@ model:
     Activity changed since last step: {{ 'yes' if observation.activity_changed else 'no' }}
     {% endif %}{% if not observation.success %}
     The last action FAILED. Inspect the exception and UI snapshot. Do not retry the same selector.
-    {% endif %}{% if observation.success and not observation.python_output %}
-    Note: no python_output was printed. Consider printing driver.current_app() after actions.
     {% endif %}{% if observation.exception %}Exception:
     {{ observation.exception }}
-    {% endif %}{% if observation.python_output %}Python output:
-    {{ observation.python_output }}
     {% endif %}{% if observation.ui_snapshot %}UI snapshot:
     {{ observation.ui_snapshot }}
     {% endif %}{% if observation.hierarchy_path %}Hierarchy XML path: {{ observation.hierarchy_path }}

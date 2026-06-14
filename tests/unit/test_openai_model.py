@@ -7,6 +7,22 @@ from webwright.models.openai_model import (
 )
 
 
+def test_openai_model_chat_completions_includes_json_schema_when_enforced() -> None:
+    config = OpenAIModelConfig(
+        model_name="qwen3-vl-plus",
+        openai_api_key="test-key",
+        openai_endpoint="https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions",
+        enforce_json_schema=True,
+    )
+    model = OpenAIModel(config_class=OpenAIModelConfig, **config.model_dump())
+
+    payload = model._build_payload([{"role": "user", "content": "Hello!"}])
+
+    assert payload["response_format"]["type"] == "json_schema"
+    assert payload["response_format"]["json_schema"]["strict"] is True
+    assert "thought" in payload["response_format"]["json_schema"]["schema"]["properties"]
+
+
 def test_openai_model_uses_chat_completions_payload_for_deepseek_endpoint() -> None:
     config = OpenAIModelConfig(
         model_name="deepseek-v4-pro",
