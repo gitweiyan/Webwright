@@ -250,3 +250,104 @@ def test_execute_actions_emits_repeat_warning_message():
     ]
     assert len(warning_messages) == 1
     assert "Loop detected" in warning_messages[0]["content"]
+
+
+def _observation_sig(*, signature: str, activity: str = ".A", success: bool = True) -> dict:
+    return {
+        "role": "user",
+        "content": "observation",
+        "extra": {
+            "observation": {
+                "success": success,
+                "current_app": {"package": "com.demo", "activity": activity},
+                "ui_signature": signature,
+            }
+        },
+    }
+
+
+def test_repeat_action_warning_uses_ui_signature_when_activity_flaps():
+    """Loop is detected even though current_app/activity flaps (the maps quirk)."""
+    agent = _make_agent(repeat_action_warning_threshold=2)
+    agent.messages = [
+        _assistant("driver.click_text('BeeBeep Alarm')"),
+        _observation_sig(signature="sig-ringtone", activity=".MapsActivity"),
+    ]
+    message = _assistant("driver.click_text('BeeBeep Alarm')")
+    outputs = [
+        {
+            "observation": {
+                "success": True,
+                "current_app": {"activity": ".RingtonePickerActivity"},
+                "ui_signature": "sig-ringtone",
+            }
+        }
+    ]
+
+    warning = agent._repeat_action_warning(message, outputs)
+
+    assert warning is not None
+    assert "Loop detected" in warning
+
+
+def test_repeat_action_warning_suppressed_when_ui_signature_changes():
+    agent = _make_agent(repeat_action_warning_threshold=2)
+    agent.messages = [
+        _assistant("driver.click_text('Next')"),
+        _observation_sig(signature="sig-1", activity=".A"),
+    ]
+    message = _assistant("driver.click_text('Next')")
+    outputs = [
+        {
+            "observation": {
+                "success": True,
+                "current_app": {"activity": ".A"},
+                "ui_signature": "sig-2",
+            }
+        }
+    ]
+
+    assert agent._repeat_action_warning(message, outputs) is None
+
+
+def test_execute_actions_stops_after_max_repeat_actions():
+    code = "driver.click_text('BeeBeep Alarm')"
+
+    class StuckEnv(FakeEnv):
+        def execute(self, action):
+            return {
+                "output": "",
+                "observation": {
+                    "success": True,
+                    "current_app": {"package": "com.demo", "activity": ".Picker"},
+                    "ui_signature": "stuck-sig",
+                },
+            }
+
+    agent = _make_agent(
+        repeat_action_warning_threshold=2,
+        max_repeat_actions_before_stop=3,
+    )
+    agent.env = StuckEnv()
+    # Seed one prior identical action that left the same signature.
+    agent.messages = [
+        _assistant(code),
+        _observation_sig(signature="stuck-sig", activity=".Picker"),
+    ]
+
+    exit_seen = False
+    for _ in range(5):
+        added = agent.execute_actions(
+            {
+                "role": "assistant",
+                "content": "retry",
+                "extra": {"actions": [{"python_code": code}]},
+            }
+        )
+        if added and added[-1].get("role") == "exit":
+            exit_seen = True
+            assert added[-1]["extra"]["exit_status"] == "RepeatActionStuck"
+            break
+
+    assert exit_seen
+    assert agent._repeat_actions_in_a_row >= 3
