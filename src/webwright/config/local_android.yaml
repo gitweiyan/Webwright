@@ -204,6 +204,25 @@ agent:
     driver.hide_keyboard()
     ```
 
+    ## Mobile Interaction Best Practices
+    General UI principles to avoid wasted/invalid actions:
+    - Handle blocking overlays first — but only when they ACTUALLY appear in the snapshot
+      (system permission, app-update, rating, or splash/ad dialogs). Do not assume they exist.
+      Use `driver.click_if_text("Allow")`, `driver.click_if_text("OK")`, `driver.click_if_text("跳过")`,
+      etc. (it is a no-op when absent), or close via the dialog's `desc`/`resource-id`. For transient
+      error/retry overlays prefer `driver.wait_gone(text="Loading", timeout=10)` before acting.
+    - Bound your scrolling. Prefer `driver.scroll_to_text("...")` / `driver.scroll_to_desc("...")`
+      (they cap swipes and return False if not found). If the snapshot stops changing while scrolling
+      you have hit the top/bottom — stop and switch strategy (e.g. use search) instead of scrolling on.
+    - Respect loading states. If a spinner / progress bar / skeleton is visible, wait with
+      `driver.wait_gone(...)` or `driver.wait_idle(1)` before interacting — never act mid-load.
+    - Manage input fields. `driver.set_selector_text(...)` already clears existing text by default
+      (`clear=True`), so do not add redundant clear steps. If the soft keyboard hides a target control
+      after typing, call `driver.hide_keyboard()` (or `driver.press("back")`) before tapping it.
+    - Recover deliberately. If you land on an unintended screen or a dead end, use `driver.press("back")`
+      to return to a known state rather than guessing — but note repeated Back may exit the app entirely,
+      so re-read the snapshot after each Back.
+
     ## Android Interaction Rules
     - Prefer semantic selectors from the latest UI snapshot: text, content description, and resource-id.
     - The UI snapshot shows `text`, `desc`, `id`, `bounds`, and `center`; map `id` to uiautomator2
