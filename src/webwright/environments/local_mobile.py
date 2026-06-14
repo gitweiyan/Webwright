@@ -12,8 +12,21 @@ from typing import Any
 from pydantic import BaseModel
 
 from webwright.devices.android_uiautomator2 import AndroidUiautomator2Driver
-from webwright.devices.snapshots import compact_android_hierarchy
+from webwright.devices.snapshots import (
+    compact_android_hierarchy,
+    foreground_package_from_hierarchy,
+)
 from webwright.utils.adb import list_adb_devices
+
+
+def _ui_signature(snapshot: str) -> str:
+    """Stable short signature of a UI snapshot, used for screen-change detection."""
+    import hashlib
+
+    normalized = " ".join((snapshot or "").split())
+    if not normalized:
+        return ""
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
 
 _DRIVER_MAPPING = {
     ("android", "uiautomator2"): AndroidUiautomator2Driver,
@@ -54,6 +67,7 @@ class LocalMobileEnvironment:
         self._driver = None
         self._step_python_code = ""
         self._step_python_output = ""
+        self._previous_ui_signature = ""
 
     def _screenshots_dir(self) -> Path:
         return self.config.output_dir / "screenshots"
@@ -67,6 +81,7 @@ class LocalMobileEnvironment:
     def prepare(self, **kwargs) -> None:
         self._prepared_task = dict(kwargs)
         self._step_index = 0
+        self._previous_ui_signature = ""
         self.config.output_dir.mkdir(parents=True, exist_ok=True)
         self._steps_dir().mkdir(parents=True, exist_ok=True)
         self._screenshots_dir().mkdir(parents=True, exist_ok=True)
@@ -237,6 +252,31 @@ class LocalMobileEnvironment:
                 hierarchy_path = None
                 ui_snapshot = ""
 
+        # Reconcile the reported foreground app with the dumped hierarchy. ``app_current()``
+        # can lag behind or report a stale/background package (e.g. a lingering Maps
+        # activity) while the UI snapshot the model actually reads shows a different app.
+        # The hierarchy only contains on-screen windows, so prefer its package and avoid
+        # surfacing a contradictory ``current_app`` that derails the agent.
+        foreground_package = foreground_package_from_hierarchy(hierarchy_xml)
+        app_current_mismatch = False
+        if foreground_package and foreground_package != current_app.get("package", ""):
+            app_current_mismatch = True
+            current_app = {
+                "package": foreground_package,
+                # ``app_current()`` activity belongs to the wrong package here, so it is
+                # unreliable; drop it rather than show a misleading activity name.
+                "activity": "",
+            }
+
+        ui_signature = _ui_signature(ui_snapshot)
+        screen_changed = bool(
+            self._previous_ui_signature
+            and ui_signature
+            and self._previous_ui_signature != ui_signature
+        )
+        if ui_signature:
+            self._previous_ui_signature = ui_signature
+
         activity_after = current_app.get("activity", "")
         activity_changed = (
             bool(activity_before)
@@ -253,6 +293,9 @@ class LocalMobileEnvironment:
             "current_app": current_app,
             "previous_activity": activity_before,
             "activity_changed": activity_changed,
+            "screen_changed": screen_changed,
+            "ui_signature": ui_signature,
+            "app_current_mismatch": app_current_mismatch,
             "screenshot_path": str(screenshot_path) if screenshot_path is not None else "",
             "hierarchy_path": str(hierarchy_path) if hierarchy_path is not None else "",
             "ui_snapshot": ui_snapshot,
