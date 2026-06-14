@@ -61,6 +61,59 @@ def _bounds_center(bounds: str) -> tuple[int, int] | None:
     return (x1 + x2) // 2, (y1 + y2) // 2
 
 
+def _bounds_area(bounds: str) -> int:
+    match = _BOUNDS_RE.fullmatch(bounds or "")
+    if match is None:
+        return 0
+    x1, y1, x2, y2 = [int(part) for part in match.groups()]
+    return max(0, x2 - x1) * max(0, y2 - y1)
+
+
+# System/overlay packages that draw on top of every screen (status bar, nav bar,
+# input method). They are never the "foreground app" the agent is interacting with.
+_NON_FOREGROUND_PACKAGES = frozenset(
+    {
+        "com.android.systemui",
+        "android",
+    }
+)
+
+
+def foreground_package_from_hierarchy(xml: str) -> str:
+    """Best-effort foreground app package derived from the dumped UI hierarchy.
+
+    ``uiautomator2``'s ``app_current()`` (``dumpsys`` based) is known to return
+    stale or wrong packages when sounds preview, transient windows appear, or other
+    apps linger in recents. The dumped hierarchy, by contrast, only contains the
+    windows that are actually on screen, so the package owning the largest visible
+    region is a far more reliable signal — and, crucially, it is the SAME source the
+    model reads as ``ui_snapshot``, keeping the two consistent.
+
+    Returns an empty string when no usable package can be determined.
+    """
+
+    if not xml or not xml.strip():
+        return ""
+    try:
+        root = ElementTree.fromstring(xml)
+    except ElementTree.ParseError:
+        return ""
+
+    best_package = ""
+    best_area = 0
+    for element, _depth in _walk(root):
+        if element is root:
+            continue
+        package = (element.attrib.get("package") or "").strip()
+        if not package or package in _NON_FOREGROUND_PACKAGES:
+            continue
+        area = _bounds_area(element.attrib.get("bounds", ""))
+        if area > best_area:
+            best_area = area
+            best_package = package
+    return best_package
+
+
 def _summarize_element(element: ElementTree.Element, depth: int) -> AndroidNodeSummary:
     attrs = element.attrib
     return AndroidNodeSummary(

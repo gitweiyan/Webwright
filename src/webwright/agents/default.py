@@ -46,9 +46,12 @@ class AgentConfig(BaseModel):
     keep_last_n_observations: int = -1
     attach_action_history: bool = False
     action_history_steps: int = 8
-    # Warn when the same python_code reaches the same activity this many times in a row
+    # Warn when the same python_code leaves the screen unchanged this many times in a row
     # (0 disables). Opt in for mobile loops (e.g. local_android.yaml sets 2).
     repeat_action_warning_threshold: int = 0
+    # Stop the run after this many consecutive repeat-action warnings without progress
+    # (0 disables). Prevents the agent from burning the whole step budget in a loop.
+    max_repeat_actions_before_stop: int = 0
     # Stop the run after this many consecutive JSON format errors without a successful device step.
     max_format_errors_without_progress: int = 6
     # Keep only the last N FormatError / RepeatActionWarning messages in context (0 disables).
@@ -97,6 +100,10 @@ def _observation_activity(observation: dict[str, Any]) -> str:
     return ""
 
 
+def _observation_ui_signature(observation: dict[str, Any]) -> str:
+    return str(observation.get("ui_signature") or "")
+
+
 def _truncate_action_code(code: str, *, max_chars: int = 200) -> str:
     text = code.strip()
     if len(text) <= max_chars:
@@ -131,6 +138,7 @@ class DefaultAgent:
         self.n_calls = 0
         self.n_format_errors = 0
         self._format_errors_without_progress = 0
+        self._repeat_actions_in_a_row = 0
 
     def _debug_dir(self) -> Path | None:
         if self.config.output_path is None:
@@ -385,6 +393,8 @@ class DefaultAgent:
                     "success": bool(observation.get("success")),
                     "activity": _observation_activity(observation),
                     "activity_changed": bool(observation.get("activity_changed")),
+                    "ui_signature": _observation_ui_signature(observation),
+                    "screen_changed": bool(observation.get("screen_changed")),
                 }
             )
             pending_code = ""
@@ -422,24 +432,39 @@ class DefaultAgent:
         if not isinstance(observation, dict):
             return None
         activity_after = _observation_activity(observation)
+        signature_after = _observation_ui_signature(observation)
 
         prior_records = self._action_step_records()
         recent = prior_records[-max(threshold * 3, 8) :]
+
+        # Detect "no progress" by an unchanged UI snapshot signature rather than by the
+        # reported activity. ``current_app``/activity can flap between the real screen and
+        # a stale/background package (a known uiautomator2 quirk), which previously
+        # defeated this check and let the agent loop for many steps. The UI signature is
+        # derived from the same hierarchy the model reads, so it is stable. We fall back to
+        # the activity comparison only when no signature is available (e.g. older runs).
+        def _same_screen(record: dict[str, Any]) -> bool:
+            if signature_after and record.get("ui_signature"):
+                return record["ui_signature"] == signature_after
+            return record["activity"] == activity_after
+
         stuck_matches = sum(
             1
             for record in recent
             if record["code"].strip() == code
-            and record["activity"] == activity_after
             and record["success"]
+            and _same_screen(record)
         )
         if stuck_matches < threshold - 1:
             return None
 
         return (
-            f"Loop detected: the same action already reached activity "
-            f"{activity_after or 'unknown'} {stuck_matches + 1} times without progress:\n"
+            f"Loop detected: the same action already left the screen unchanged "
+            f"{stuck_matches + 1} times without progress:\n"
             f"  {code}\n"
-            "Do NOT repeat this action. Choose a different selector or strategy."
+            "Do NOT repeat this action or selector. Change strategy: press Back, open the "
+            "control via a different selector (resource-id / desc / xpath), scroll to reveal "
+            "hidden controls, or re-read the latest UI snapshot for a better target."
         )
 
     def _compact_history(self) -> None:
@@ -486,6 +511,7 @@ class DefaultAgent:
         self.n_calls = 0
         self.n_format_errors = 0
         self._format_errors_without_progress = 0
+        self._repeat_actions_in_a_row = 0
         self.add_messages(
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
@@ -605,15 +631,33 @@ class DefaultAgent:
                 observation_messages.append(plan_message)
         added = self.add_messages(*observation_messages)
         repeat_warning = self._repeat_action_warning(message, outputs)
-        if repeat_warning is not None:
+        if repeat_warning is None:
+            self._repeat_actions_in_a_row = 0
+            return added
+        self._repeat_actions_in_a_row += 1
+        stop_limit = self.config.max_repeat_actions_before_stop
+        if stop_limit > 0 and self._repeat_actions_in_a_row >= stop_limit:
             return self.add_messages(
                 self.model.format_message(
-                    role="user",
-                    content=repeat_warning,
-                    extra={"interrupt_type": "RepeatActionWarning"},
+                    role="exit",
+                    content=(
+                        f"Stopped after {self._repeat_actions_in_a_row} consecutive actions "
+                        "that left the screen unchanged. The agent appears stuck in a loop "
+                        "and could not make progress."
+                    ),
+                    extra={
+                        "exit_status": "RepeatActionStuck",
+                        "submission": "",
+                    },
                 )
             )
-        return added
+        return self.add_messages(
+            self.model.format_message(
+                role="user",
+                content=repeat_warning,
+                extra={"interrupt_type": "RepeatActionWarning"},
+            )
+        )
 
     def serialize(self, *extra_dicts) -> dict[str, Any]:
         last_message = self.messages[-1] if self.messages else {}
