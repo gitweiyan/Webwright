@@ -1,0 +1,25 @@
+# Model modifier — Qwen VL via Alibaba Cloud Bailian (DashScope OpenAI-compatible API).
+#
+# Stack on top of base.yaml for agent + tools (image_qa, self_reflection):
+#   python -m webwright.run.cli -c base.yaml -c model_qwen_vision.yaml ...
+#
+# Or pass only to self_reflection / image_qa:
+#   python -m webwright.tools.self_reflection \
+#     --config self_reflect_config.json \
+#     --workspace-dir <workspace> \
+#     --output final_runs/run_001/self_reflect_result.json \
+#     --model-config model_qwen_vision.yaml
+#
+# Required env: DASHSCOPE_API_KEY (百炼控制台 → API-Key，北京地域)
+# Docs: https://help.aliyun.com/zh/model-studio/qwen-vl-compatible-with-openai
+#
+# Endpoint (北京): https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+# 新加坡: https://dashscope-intl.aliyuncs.com/compatible-mode/v1/chat/completions
+# 弗吉尼亚: https://dashscope-us.aliyuncs.com/compatible-mode/v1/chat/completions
+
+model:
+  model_class: openai
+  model_name: qwen3-vl-plus
+  openai_endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+  # DashScope compatible-mode supports OpenAI-style json_schema response_format.
+  enforce_json_schema: true

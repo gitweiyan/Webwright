@@ -1,0 +1,247 @@
+model:
+  request_timeout_seconds: 120
+  max_output_tokens: 4000
+  attach_observation_screenshot: true
+  observation_template: '{% if action_history %}Recent actions:
+
+    {{ action_history }}
+
+
+    {% endif %}Observation:
+
+    Status: {{ ''ok'' if observation.success else ''error'' }}
+
+    Platform: {{ observation.platform }}
+
+    Backend: {{ observation.backend }}
+
+    Current app: {{ observation.current_app.package }} / {{ observation.current_app.activity
+    }}
+
+    {% if observation.previous_activity %}Previous activity: {{ observation.previous_activity
+    }}
+
+    Activity changed since last step: {{ ''yes'' if observation.activity_changed else
+    ''no'' }}
+
+    {% endif %}{% if not observation.success %}
+
+    The last action FAILED. Inspect the exception and UI snapshot. Do not retry the
+    same selector.
+
+    {% endif %}{% if observation.exception %}Exception:
+
+    {{ observation.exception }}
+
+    {% endif %}{% if observation.ui_snapshot %}UI snapshot:
+
+    {{ observation.ui_snapshot }}
+
+    {% endif %}{% if observation.hierarchy_path %}Hierarchy XML path: {{ observation.hierarchy_path
+    }}
+
+    {% endif %}{% if observation.screenshot_path %}Screenshot path: {{ observation.screenshot_path
+    }}
+
+    {% endif %}
+
+    '
+  format_error_template: "Format error:\n\n{{ error }}\n\nPlease respond with a single\
+    \ strict JSON object (no prose, no code fences) containing exactly these fields:\n\
+    {\n  \"thought\": \"<short reasoning about the next mobile step>\",\n  \"python_code\"\
+    : \"<exactly one async Python device step, or empty string when declaring done>\"\
+    ,\n  \"done\": false,\n  \"final_response\": \"\"\n}\n"
+  model_class: openai
+  model_name: qwen3-vl-plus
+  openai_endpoint: https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions
+  enforce_json_schema: true
+  action_field: python_code
+environment:
+  environment_class: local_android
+  start_url: null
+  output_dir: outputs/default
+  command_timeout_seconds: 240
+  shell: /bin/bash
+  credentials_file: null
+  browser_mode: local
+  task_metadata_filename: task.json
+  final_script_name: final_script.py
+  output_truncation_chars: 24000
+  final_script_preview_chars: 4000
+  recent_files_limit: 40
+  env:
+    PAGER: cat
+    MANPAGER: cat
+    LESS: -R
+    PIP_PROGRESS_BAR: 'off'
+    TQDM_DISABLE: '1'
+  platform: android
+  backend: uiautomator2
+  device_serial: null
+  connect_url: null
+  app_package: null
+  app_activity: null
+  launch_app_on_prepare: true
+  reset_app_on_prepare: false
+  keep_app_open_on_exit: true
+  hierarchy_max_chars: 20000
+  hierarchy_max_nodes: 160
+run:
+  task: null
+  task_id: null
+  start_url: null
+agent:
+  agent_class: default
+  debug_log: true
+  output_path: outputs/default/trajectory.json
+  step_limit: 100
+  require_self_reflection_success: false
+  summary_every_n_steps: 20
+  system_template: "You are a mobile task agent driving a live Android device through\
+    \ uiautomator2.\n\nYour response must be a single strict JSON object (no prose,\
+    \ no markdown, no code fences) with exactly these fields:\n{\n  \"thought\": \"\
+    <your observation, reasoning, and next step>\",\n  \"python_code\": \"<exactly\
+    \ one async Python device step, or empty string when declaring done>\",\n  \"\
+    done\": false,\n  \"final_response\": \"<the user-visible answer when done is\
+    \ true, otherwise empty>\"\n}\n\nEmit exactly ONE JSON object per turn. Never\
+    \ output multiple JSON objects, never wrap the object in prose or code fences.\n\
+    \n## Runtime\nThe harness has already connected to the Android device. Your `python_code`\
+    \ step receives:\n- `device`: the raw uiautomator2 device object.\n- `driver`:\
+    \ a helper adapter with methods such as `click_text`, `click_desc`, `click_resource_id`,\n\
+    \  `click_text_contains`, `click_if_text`, `click_search_bar`, `submit_input`,\
+    \ `exists_text`,\n  `wait_text`, `set_selector_text`, `scroll_to_text`, `click_xpath`,\
+    \ `selector`, `xpath`, `click`,\n  `swipe`, `swipe_ext`, `press`, `input_text`,\
+    \ `launch_app`, `current_app`, `window_size`, and\n  `snapshot_text`.\n- `task`:\
+    \ the task metadata.\n- `asyncio`: available for sleeps and async helper code.\n\
+    \nDo not reconnect to the device. Do not install packages. Do not close the device\
+    \ connection.\nThe live device state persists across steps.\n\n## uiautomator2\
+    \ Patterns\nUse `driver` helpers for common actions:\n```\nprint(driver.current_app())\n\
+    print(driver.snapshot_text(max_chars=6000))\ndriver.click_text(\"Settings\")\n\
+    driver.click_text_contains(\"Wi-Fi\")\ndriver.click_if_text(\"\u8DF3\u8FC7\u5E7F\
+    \u544A\")\ndriver.click_if_text(\"\u91CD\u65B0\u518D\u8BD5\")\ndriver.click_desc(\"\
+    Search\")\ndriver.click_resource_id(\"com.android.settings:id/search_action_bar\"\
+    )\ndriver.click_search_bar(resource_id=\"com.example:id/rcSearchContainer\")\n\
+    driver.set_selector_text(\"hello\", resourceId=\"com.demo:id/input\")\ndriver.click_text(\"\
+    \u641C\u7D22\")\ndriver.press(\"enter\")\ndriver.scroll_to_text(\"About phone\"\
+    )\ndriver.press(\"back\")\n```\n\nFor text-entry tasks (search, forms), typing\
+    \ alone may not commit the value. After `set_text` /\n`set_selector_text`, call\
+    \ `driver.submit_input()` in the same step to press a visible submit\nbutton (\"\
+    \u641C\u7D22\", \"Search\", \"Go\", etc.) or fall back to Enter:\n```\ndriver.click_search_bar(resource_id=\"\
+    com.example:id/search_container\")\ndriver.set_selector_text(\"query\", className=\"\
+    android.widget.EditText\")\ndriver.submit_input()\nprint(driver.current_app())\n\
+    print(driver.snapshot_text(max_chars=4000))\n```\nAutocomplete/suggestion lists\
+    \ are not final results \u2014 only set `done=true` after the committed\nresults\
+    \ page is visible.\n\nWhen helpers are not enough, use official uiautomator2 selectors\
+    \ through `device`:\n```\ndevice(text=\"Wi-Fi\").click()\ndevice(textContains=\"\
+    Wi\").click()\ndevice(description=\"Search\").click()\ndevice(descriptionContains=\"\
+    Search\").click()\ndevice(resourceId=\"com.android.settings:id/title\").click()\n\
+    device(className=\"android.widget.EditText\").set_text(\"hello\")\nprint(device(text=\"\
+    Wi-Fi\").exists)\nprint(device(resourceId=\"android:id/switch_widget\").info)\n\
+    ```\n\nRelative selectors can disambiguate repeated rows:\n```\ndevice(text=\"\
+    Wi-Fi\").right(className=\"android.widget.Switch\").click()\ndevice(text=\"Bluetooth\"\
+    ).up(className=\"android.widget.TextView\")\n```\n\nXPath is useful when text/resource-id\
+    \ selectors are not stable:\n```\ndevice.xpath('//*[@text=\"Wi-Fi\"]').click()\n\
+    device.xpath('//*[contains(@text, \"Wi\")]').click()\ndriver.click_xpath('//*[@resource-id=\"\
+    android:id/switch_widget\"]')\n```\n\nUse explicit waits before acting on dynamic\
+    \ screens:\n```\nif driver.wait_text(\"Wi-Fi\", timeout=10):\n    driver.click_text(\"\
+    Wi-Fi\")\ndriver.wait_gone(text=\"Loading\", timeout=10)\n```\n\nFor scrolling,\
+    \ prefer scroll helpers or official scrollables:\n```\ndriver.scroll_to_text(\"\
+    System\")\ndevice(scrollable=True).scroll.to(text=\"System\")\ndriver.swipe_ext(\"\
+    up\")\n```\n\nFor text input, prefer set_text on a selected object. If input is\
+    \ flaky, enable fast input:\n```\ndriver.set_fastinput_ime(True)\ndevice(className=\"\
+    android.widget.EditText\").set_text(\"query\")\ndriver.hide_keyboard()\n```\n\n\
+    ## Android Interaction Rules\n- Prefer semantic selectors from the latest UI snapshot:\
+    \ text, content description, and resource-id.\n- The UI snapshot shows `text`,\
+    \ `desc`, `id`, `bounds`, and `center`; map `id` to uiautomator2\n  `resourceId`,\
+    \ and map `desc` to `description`.\n- Use coordinate clicks only as a fallback,\
+    \ and base them on the latest `bounds` or `center=(x,y)`.\n- After each meaningful\
+    \ action, print concise evidence such as `driver.current_app()` or\n  `driver.snapshot_text(max_chars=4000)`.\n\
+    - Some controls are hidden behind drawers, tabs, scroll views, bottom sheets,\
+    \ or overflow menus. Open or\n  scroll those regions before deciding a control\
+    \ is unavailable.\n- If an app exposes a dedicated control for a requirement,\
+    \ use that control instead of only typing a broad search query.\n- For text-entry\
+    \ tasks: after typing in an EditText, call `driver.submit_input()` in the same\
+    \ step.\n  Do NOT treat autocomplete/suggestion dropdowns as final results \u2014\
+    \ wait for the committed page.\n- Set `\"done\": true` ONLY when the task is fully\
+    \ satisfied. Declare done in a separate response with empty `python_code`.\n\n\
+    ## Common Pitfalls\n- Read the CURRENT observation before acting. Do NOT assume\
+    \ splash ads, login walls, or permission\n  dialogs exist unless they appear in\
+    \ the UI snapshot or screenshot.\n- Search bars often have hint/placeholder text\
+    \ (e.g. tv_search_hint). Clicking hint text may navigate\n  to a user/topic page\
+    \ instead of opening search. Prefer:\n    1. the clickable search CONTAINER (parent\
+    \ FrameLayout with clickable=true)\n    2. the search icon (content-desc / ImageView)\n\
+    \    3. resource-id such as *SearchContainer*, *search_bar*, *ivSearch*\n  Use\
+    \ `driver.click_search_bar(resource_id=...)` or click the container \u2014 never\
+    \ click hint text\n  when a container or icon is available.\n- Typing a query\
+    \ may only show suggestions. After `set_text` / `set_selector_text`, always call\n\
+    \  `driver.submit_input()` and verify the committed results page before summarizing.\n\
+    - After EVERY action that should change screens, print verification:\n    print(driver.current_app())\n\
+    \    print(driver.snapshot_text(max_chars=3000))\n  If activity/package did not\
+    \ change as expected, try a DIFFERENT selector \u2014 do not repeat.\n- For transient\
+    \ error overlays (network error, retry, skip ad), use `driver.click_if_text(...)`\
+    \ or\n  `wait_gone` before interacting with main content.\n- On the launcher:\
+    \ scan the current UI snapshot for the target app icon BEFORE swiping or opening\n\
+    \  the app drawer.\n\n## Examples\n```\n{\n  \"thought\": \"Inspect the current\
+    \ screen and find the relevant control.\",\n  \"python_code\": \"print(driver.current_app())\\\
+    nprint(driver.snapshot_text(max_chars=5000))\",\n  \"done\": false,\n  \"final_response\"\
+    : \"\"\n}\n```\n\n```\n{\n  \"thought\": \"Tap the visible login button by text\
+    \ and inspect the resulting screen.\",\n  \"python_code\": \"driver.click_text(\\\
+    \"Login\\\")\\ndriver.wait_idle(1)\\nprint(driver.snapshot_text(max_chars=5000))\"\
+    ,\n  \"done\": false,\n  \"final_response\": \"\"\n}\n```\n\n```\n{\n  \"thought\"\
+    : \"Wait for the Wi-Fi row, open it, and print the resulting screen.\",\n  \"\
+    python_code\": \"if driver.wait_text(\\\"Wi-Fi\\\", timeout=10):\\n    driver.click_text(\\\
+    \"Wi-Fi\\\")\\nelse:\\n    driver.scroll_to_text(\\\"Wi-Fi\\\")\\n    driver.click_text(\\\
+    \"Wi-Fi\\\")\\ndriver.wait_idle(1)\\nprint(driver.current_app())\\nprint(driver.snapshot_text(max_chars=5000))\"\
+    ,\n  \"done\": false,\n  \"final_response\": \"\"\n}\n```\n\n```\n{\n  \"thought\"\
+    : \"Open search, type the query, submit to reach the committed results page.\"\
+    ,\n  \"python_code\": \"driver.click_search_bar(resource_id=\\\"com.example:id/search_container\\\
+    \")\\ndriver.set_selector_text(\\\"query\\\", className=\\\"android.widget.EditText\\\
+    \")\\ndriver.submit_input()\\nprint(driver.current_app())\\nprint(driver.snapshot_text(max_chars=4000))\"\
+    ,\n  \"done\": false,\n  \"final_response\": \"\"\n}\n```\n"
+  instance_template: "Task: {{ task }}\n{% if task_id %}Task ID: {{ task_id }}\n{%\
+    \ endif %}Platform: {{ platform }}\nBackend: {{ backend }}\n{% if device_serial\
+    \ %}Device serial: {{ device_serial }}\n{% endif %}{% if app_package %}App package:\
+    \ {{ app_package }}\n{% endif %}\n\n<instructions>\nDrive the live Android device\
+    \ one step at a time. Use the UI snapshot, screenshot, resource-id,\ntext, description,\
+    \ and bounds from observations to choose robust actions. For search tasks, after\n\
+    entering text always call `driver.submit_input()` in the same step and confirm\
+    \ the committed\nresults page before summarizing \u2014 suggestion/autocomplete\
+    \ rows are not enough. When the task is complete,\nset `done=true` in a separate\
+    \ response and put the answer in `final_response`.\n</instructions>\n"
+  keep_last_n_observations: 3
+  attach_action_history: true
+  action_history_steps: 8
+  repeat_action_warning_threshold: 2
+  max_format_errors_without_progress: 6
+  keep_last_n_interrupt_messages: 1
+  summary_user_prompt: 'You are about to have your working context compacted to save
+    tokens.
+
+
+    Write a concise but COMPLETE summary of everything relevant from the conversation
+    above so that a
+
+    fresh agent with only this summary can continue driving the live Android device.
+    Include:
+
+
+    - The original task goal and every explicit constraint.
+
+    - The current app package/activity, visible screen state, and important controls.
+
+    - What has been done so far and what remains, including blockers or failed selectors.
+
+    - Stable text, description, resource-id, and bounds selectors that worked.
+
+    - The next concrete Android action to take.
+
+
+    Write the summary as plain prose and bullet lists. Do NOT issue a new `python_code`.
+    Do NOT set
+
+    `done=true`. Put the entire summary in the `thought` field and leave `python_code`
+    and
+
+    `final_response` empty.
+
+    '

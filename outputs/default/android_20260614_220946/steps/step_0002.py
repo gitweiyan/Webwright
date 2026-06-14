@@ -1,0 +1,1 @@
+driver.click_text("Clock")

@@ -1,0 +1,23 @@
+[
+  {
+    "index": 0,
+    "spec": "base.yaml",
+    "kind": "file",
+    "resolved_path": "/Users/xf/Documents/code/Webwright/src/webwright/config/base.yaml",
+    "saved_copy": "outputs/default/android_20260614_220946/config_snapshot/00_base.yaml"
+  },
+  {
+    "index": 1,
+    "spec": "model_qwen_vision.yaml",
+    "kind": "file",
+    "resolved_path": "/Users/xf/Documents/code/Webwright/src/webwright/config/model_qwen_vision.yaml",
+    "saved_copy": "outputs/default/android_20260614_220946/config_snapshot/01_model_qwen_vision.yaml"
+  },
+  {
+    "index": 2,
+    "spec": "local_android.yaml",
+    "kind": "file",
+    "resolved_path": "/Users/xf/Documents/code/Webwright/src/webwright/config/local_android.yaml",
+    "saved_copy": "outputs/default/android_20260614_220946/config_snapshot/02_local_android.yaml"
+  }
+]

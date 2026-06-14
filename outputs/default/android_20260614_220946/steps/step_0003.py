@@ -1,0 +1,1 @@
+driver.click_resource_id("com.google.android.deskclock:id/fab")
