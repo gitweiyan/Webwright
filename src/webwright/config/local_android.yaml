@@ -33,9 +33,11 @@ model:
     Status: {{ 'ok' if observation.success else 'error' }}
     Platform: {{ observation.platform }}
     Backend: {{ observation.backend }}
-    Current app: {{ observation.current_app.package }} / {{ observation.current_app.activity }}
-    {% if observation.previous_activity %}Previous activity: {{ observation.previous_activity }}
-    Activity changed since last step: {{ 'yes' if observation.activity_changed else 'no' }}
+    Screen changed since last step: {{ 'yes' if observation.screen_changed else 'no (the UI looks identical to the previous step)' }}
+    Current app (best-effort, may lag — TRUST THE UI SNAPSHOT BELOW WHEN THEY DISAGREE): {{ observation.current_app.package }}{% if observation.current_app.activity %} / {{ observation.current_app.activity }}{% endif %}
+    {% if observation.screen_changed == false %}
+    The screen did NOT change after the last action. Either the action had no effect or it
+    targeted the wrong element. Do NOT repeat the same action/selector — change strategy.
     {% endif %}{% if not observation.success %}
     The last action FAILED. Inspect the exception and UI snapshot. Do not retry the same selector.
     {% endif %}{% if observation.exception %}Exception:
@@ -78,6 +80,7 @@ agent:
   attach_action_history: true
   action_history_steps: 8
   repeat_action_warning_threshold: 2
+  max_repeat_actions_before_stop: 5
   max_format_errors_without_progress: 6
   keep_last_n_interrupt_messages: 1
   summary_user_prompt: |
@@ -213,6 +216,15 @@ agent:
     - If an app exposes a dedicated control for a requirement, use that control instead of only typing a broad search query.
     - For text-entry tasks: after typing in an EditText, call `driver.submit_input()` in the same step.
       Do NOT treat autocomplete/suggestion dropdowns as final results — wait for the committed page.
+    - Single-select / radio lists (ringtone pickers, account choosers, theme lists, etc.) COMMIT on a
+      single tap: tapping a row selects it (a checkmark / `selected=true` appears) and the picker usually
+      does NOT auto-close and has NO separate "OK". Once the desired row shows selected, press the Back /
+      "Navigate up" arrow ONCE to confirm and return — do NOT tap the same row again. Re-tapping a row that
+      is already selected wastes steps and can deselect it.
+    - Multi-requirement tasks: break the goal into explicit sub-goals and track them in your `thought`
+      (e.g. "[x] time set, [x] days set, [ ] ringtone, [ ] vibration off, [ ] saved"). Re-check the
+      checklist every few steps so you do not tunnel-vision on one item and forget the rest. Only set
+      `done=true` after EVERY sub-goal is verified in the UI snapshot AND the change is saved/applied.
     - Set `"done": true` ONLY when the task is fully satisfied. Declare done in a separate response with empty `python_code`.
 
     ## Common Pitfalls
@@ -228,9 +240,13 @@ agent:
     - Typing a query may only show suggestions. After `set_text` / `set_selector_text`, always call
       `driver.submit_input()` and verify the committed results page before summarizing.
     - After EVERY action that should change screens, print verification:
-        print(driver.current_app())
         print(driver.snapshot_text(max_chars=3000))
-      If activity/package did not change as expected, try a DIFFERENT selector — do not repeat.
+      Judge progress from the UI snapshot and the "Screen changed since last step" line — NOT from
+      `current_app`. `driver.current_app()` is best-effort and can briefly report a stale or background
+      package (e.g. a lingering Maps activity) even though the snapshot clearly shows the real screen.
+      If the snapshot and `current_app` disagree, BELIEVE THE SNAPSHOT.
+    - If the screen did not change as expected, try a DIFFERENT selector or strategy — do not repeat the
+      same action. Repeating an action that leaves the screen unchanged will be flagged and may stop the run.
     - For transient error overlays (network error, retry, skip ad), use `driver.click_if_text(...)` or
       `wait_gone` before interacting with main content.
     - On the launcher: scan the current UI snapshot for the target app icon BEFORE swiping or opening
