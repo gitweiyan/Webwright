@@ -629,11 +629,14 @@ class DefaultAgent:
             plan_message = self._plan_md_message()
             if plan_message is not None:
                 observation_messages.append(plan_message)
-        added = self.add_messages(*observation_messages)
+        # Check for repeat actions before appending the current observation so
+        # _action_step_records() only sees prior turns (not a self-match).
         repeat_warning = self._repeat_action_warning(message, outputs)
+        added = self.add_messages(*observation_messages)
         if repeat_warning is None:
             self._repeat_actions_in_a_row = 0
             return added
+
         self._repeat_actions_in_a_row += 1
         stop_limit = self.config.max_repeat_actions_before_stop
         if stop_limit > 0 and self._repeat_actions_in_a_row >= stop_limit:
