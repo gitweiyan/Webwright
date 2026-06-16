@@ -73,6 +73,7 @@ environment:
   keep_app_open_on_exit: true
   hierarchy_max_chars: 20000
   hierarchy_max_nodes: 160
+  screenshot_max_bytes: 100000  # ~100 KB — resize if exceeded
 
 agent:
   require_self_reflection_success: false
@@ -104,7 +105,7 @@ agent:
 
     Your response must be a single strict JSON object (no prose, no markdown, no code fences) with exactly these fields:
     {
-      "thought": "<your observation, reasoning, and next step>",
+      "thought": "<your observation, perception, and planning for the next step>",
       "python_code": "<exactly one async Python device step, or empty string when declaring done>",
       "done": false,
       "final_response": "<the user-visible answer when done is true, otherwise empty>"
@@ -125,12 +126,13 @@ agent:
 
     Do not reconnect to the device. Do not install packages. Do not close the device connection.
     The live device state persists across steps.
+    After every step the harness automatically captures a screenshot and UI hierarchy snapshot —
+    do NOT call `print(driver.snapshot_text(...))` or `print(driver.current_app())` for routine
+    verification; read the next Observation message instead.
 
     ## uiautomator2 Patterns
     Use `driver` helpers for common actions:
     ```
-    print(driver.current_app())
-    print(driver.snapshot_text(max_chars=6000))
     driver.click_text("Settings")
     driver.click_text_contains("Wi-Fi")
     driver.click_if_text("跳过广告")
@@ -146,14 +148,19 @@ agent:
     ```
 
     For text-entry tasks (search, forms), typing alone may not commit the value. After `set_text` /
-    `set_selector_text`, call `driver.submit_input()` in the same step to press a visible submit
-    button ("搜索", "Search", "Go", etc.) or fall back to Enter:
+    `set_selector_text`, call `driver.submit_input()` **in the same step**.  ``submit_input`` presses a
+    visible submit button ("搜索", "Search", "Go", etc.) or falls back to Enter.  Do NOT emit a
+    standalone ``submit_input()`` step on its own — it wastes a turn and is often repeated needlessly:
     ```
+    # ✅ CORRECT — type and submit in one step
     driver.click_search_bar(resource_id="com.example:id/search_container")
     driver.set_selector_text("query", className="android.widget.EditText")
     driver.submit_input()
-    print(driver.current_app())
-    print(driver.snapshot_text(max_chars=4000))
+
+    # ❌ WRONG — splitting into two steps (wastes turns, leads to repetition)
+    # Step N:   driver.set_selector_text(...)
+    # Step N+1: driver.submit_input()
+    # Step N+2: driver.submit_input()   ← repeated!
     ```
     Autocomplete/suggestion lists are not final results — only set `done=true` after the committed
     results page is visible.
@@ -204,32 +211,11 @@ agent:
     driver.hide_keyboard()
     ```
 
-    ## Mobile Interaction Best Practices
-    General UI principles to avoid wasted/invalid actions:
-    - Handle blocking overlays first — but only when they ACTUALLY appear in the snapshot
-      (system permission, app-update, rating, or splash/ad dialogs). Do not assume they exist.
-      Use `driver.click_if_text("Allow")`, `driver.click_if_text("OK")`, `driver.click_if_text("跳过")`,
-      etc. (it is a no-op when absent), or close via the dialog's `desc`/`resource-id`. For transient
-      error/retry overlays prefer `driver.wait_gone(text="Loading", timeout=10)` before acting.
-    - Bound your scrolling. Prefer `driver.scroll_to_text("...")` / `driver.scroll_to_desc("...")`
-      (they cap swipes and return False if not found). If the snapshot stops changing while scrolling
-      you have hit the top/bottom — stop and switch strategy (e.g. use search) instead of scrolling on.
-    - Respect loading states. If a spinner / progress bar / skeleton is visible, wait with
-      `driver.wait_gone(...)` or `driver.wait_idle(1)` before interacting — never act mid-load.
-    - Manage input fields. `driver.set_selector_text(...)` already clears existing text by default
-      (`clear=True`), so do not add redundant clear steps. If the soft keyboard hides a target control
-      after typing, call `driver.hide_keyboard()` (or `driver.press("back")`) before tapping it.
-    - Recover deliberately. If you land on an unintended screen or a dead end, use `driver.press("back")`
-      to return to a known state rather than guessing — but note repeated Back may exit the app entirely,
-      so re-read the snapshot after each Back.
-
     ## Android Interaction Rules
     - Prefer semantic selectors from the latest UI snapshot: text, content description, and resource-id.
     - The UI snapshot shows `text`, `desc`, `id`, `bounds`, and `center`; map `id` to uiautomator2
       `resourceId`, and map `desc` to `description`.
     - Use coordinate clicks only as a fallback, and base them on the latest `bounds` or `center=(x,y)`.
-    - After each meaningful action, print concise evidence such as `driver.current_app()` or
-      `driver.snapshot_text(max_chars=4000)`.
     - Some controls are hidden behind drawers, tabs, scroll views, bottom sheets, or overflow menus. Open or
       scroll those regions before deciding a control is unavailable.
     - If an app exposes a dedicated control for a requirement, use that control instead of only typing a broad search query.
@@ -257,13 +243,15 @@ agent:
       Use `driver.click_search_bar(resource_id=...)` or click the container — never click hint text
       when a container or icon is available.
     - Typing a query may only show suggestions. After `set_text` / `set_selector_text`, always call
-      `driver.submit_input()` and verify the committed results page before summarizing.
-    - After EVERY action that should change screens, print verification:
-        print(driver.snapshot_text(max_chars=3000))
-      Judge progress from the UI snapshot and the "Screen changed since last step" line — NOT from
-      `current_app`. `driver.current_app()` is best-effort and can briefly report a stale or background
-      package (e.g. a lingering Maps activity) even though the snapshot clearly shows the real screen.
-      If the snapshot and `current_app` disagree, BELIEVE THE SNAPSHOT.
+      `driver.submit_input()` **in the same step** and verify the committed results page before
+      summarizing.  Never emit a standalone ``submit_input()`` — the harness already ran it when you
+      paired it with ``set_selector_text`` in the previous turn.  If suggestions appear instead of
+      results, click the suggestion row that matches your query (usually the first one) rather than
+      re-calling ``submit_input()``.
+    - Judge progress from the automatic Observation (UI snapshot, screenshot, and "Screen changed since
+      last step" line) — NOT from `current_app`. The observation's `current_app` field is best-effort
+      and can briefly report a stale or background package (e.g. a lingering Maps activity) even though
+      the snapshot clearly shows the real screen. If they disagree, BELIEVE THE SNAPSHOT.
     - If the screen did not change as expected, try a DIFFERENT selector or strategy — do not repeat the
       same action. Repeating an action that leaves the screen unchanged will be flagged and may stop the run.
     - For transient error overlays (network error, retry, skip ad), use `driver.click_if_text(...)` or
@@ -274,8 +262,8 @@ agent:
     ## Examples
     ```
     {
-      "thought": "Inspect the current screen and find the relevant control.",
-      "python_code": "print(driver.current_app())\nprint(driver.snapshot_text(max_chars=5000))",
+      "thought": "The observation shows a Login button; tap it by text.",
+      "python_code": "driver.click_text(\"Login\")",
       "done": false,
       "final_response": ""
     }
@@ -283,8 +271,8 @@ agent:
 
     ```
     {
-      "thought": "Tap the visible login button by text and inspect the resulting screen.",
-      "python_code": "driver.click_text(\"Login\")\ndriver.wait_idle(1)\nprint(driver.snapshot_text(max_chars=5000))",
+      "thought": "Wait for the Wi-Fi row, then open it.",
+      "python_code": "if driver.wait_text(\"Wi-Fi\", timeout=10):\n    driver.click_text(\"Wi-Fi\")\nelse:\n    driver.scroll_to_text(\"Wi-Fi\")\n    driver.click_text(\"Wi-Fi\")",
       "done": false,
       "final_response": ""
     }
@@ -292,17 +280,8 @@ agent:
 
     ```
     {
-      "thought": "Wait for the Wi-Fi row, open it, and print the resulting screen.",
-      "python_code": "if driver.wait_text(\"Wi-Fi\", timeout=10):\n    driver.click_text(\"Wi-Fi\")\nelse:\n    driver.scroll_to_text(\"Wi-Fi\")\n    driver.click_text(\"Wi-Fi\")\ndriver.wait_idle(1)\nprint(driver.current_app())\nprint(driver.snapshot_text(max_chars=5000))",
-      "done": false,
-      "final_response": ""
-    }
-    ```
-
-    ```
-    {
-      "thought": "Open search, type the query, submit to reach the committed results page.",
-      "python_code": "driver.click_search_bar(resource_id=\"com.example:id/search_container\")\ndriver.set_selector_text(\"query\", className=\"android.widget.EditText\")\ndriver.submit_input()\nprint(driver.current_app())\nprint(driver.snapshot_text(max_chars=4000))",
+      "thought": "Open search, type the query, and submit to reach the committed results page.",
+      "python_code": "driver.click_search_bar(resource_id=\"com.example:id/search_container\")\ndriver.set_selector_text(\"query\", className=\"android.widget.EditText\")\ndriver.submit_input()",
       "done": false,
       "final_response": ""
     }

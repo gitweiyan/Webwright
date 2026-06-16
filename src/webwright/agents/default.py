@@ -139,6 +139,7 @@ class DefaultAgent:
         self.n_format_errors = 0
         self._format_errors_without_progress = 0
         self._repeat_actions_in_a_row = 0
+        self._action_step_records_cache: list[dict[str, Any]] = []
 
     def _debug_dir(self) -> Path | None:
         if self.config.output_path is None:
@@ -373,13 +374,28 @@ class DefaultAgent:
                 obs[key] = ""
 
     def _action_step_records(self) -> list[dict[str, Any]]:
+        """Return prior action→observation records.
+
+        Normally populated incrementally by :meth:`execute_actions` after each
+        step so callers do not rescan the full message list on every turn.
+        Falls back to a one-shot scan of ``self.messages`` when the cache is
+        empty (first call, or after a history compaction, or when tests seed
+        messages directly).
+        """
+        if self._action_step_records_cache:
+            return self._action_step_records_cache
+
+        # Lazy initialisation from the current message list.
         records: list[dict[str, Any]] = []
         pending_code = ""
         for msg in self.messages:
             if msg.get("role") == "assistant":
                 extra = msg.get("extra", {})
                 actions = extra.get("actions", [])
-                codes = [_python_action_text(action) or _action_text(action) for action in actions]
+                codes = [
+                    _python_action_text(action) or _action_text(action)
+                    for action in actions
+                ]
                 pending_code = "\n".join(code for code in codes if code).strip()
                 continue
             if msg.get("role") != "user":
@@ -398,7 +414,8 @@ class DefaultAgent:
                 }
             )
             pending_code = ""
-        return records
+        self._action_step_records_cache = records
+        return self._action_step_records_cache
 
     def _recent_action_history(self, limit: int) -> str:
         records = self._action_step_records()
@@ -504,6 +521,7 @@ class DefaultAgent:
             extra={"interrupt_type": "HistoryCompactionSummary"},
         )
         self.messages = [system_message, summary_message]
+        self._action_step_records_cache.clear()
 
     def run(self, task: str = "", **kwargs) -> dict[str, Any]:
         self.extra_template_vars |= {"task": task, **kwargs}
@@ -512,6 +530,7 @@ class DefaultAgent:
         self.n_format_errors = 0
         self._format_errors_without_progress = 0
         self._repeat_actions_in_a_row = 0
+        self._action_step_records_cache.clear()
         self.add_messages(
             self.model.format_message(role="system", content=self._render_template(self.config.system_template)),
             self.model.format_message(role="user", content=self._render_template(self.config.instance_template)),
@@ -633,11 +652,46 @@ class DefaultAgent:
         # _action_step_records() only sees prior turns (not a self-match).
         repeat_warning = self._repeat_action_warning(message, outputs)
         added = self.add_messages(*observation_messages)
-        if repeat_warning is None:
-            self._repeat_actions_in_a_row = 0
-            return added
 
-        self._repeat_actions_in_a_row += 1
+        # ---- two-layer stuck detection ---------------------------------------
+        # Layer 1 (warning) — same code on same screen: nudge the model to try a
+        #   different selector / strategy.
+        # Layer 2 (force-stop) — screen has not changed for N consecutive steps
+        #   regardless of code variation: the agent is fundamentally stuck.
+        #
+        # ``screen_changed`` is the objective signal computed by the environment
+        # from actual UI snapshots.  It resets the counter even when a repeat
+        # warning fires (the screen *did* change → progress happened).
+        # ----------------------------------------------------------------------
+        observation = outputs[0].get("observation", {}) if outputs else {}
+        screen_changed = isinstance(observation, dict) and bool(observation.get("screen_changed"))
+
+        # Append to the incremental action→observation cache so that downstream
+        # callers (_repeat_action_warning, _recent_action_history) do not rescan
+        # the full message list on every turn.
+        if isinstance(observation, dict):
+            actions = message.get("extra", {}).get("actions", [])
+            codes = [
+                _python_action_text(action) or _action_text(action) for action in actions
+            ]
+            pending_code = "\n".join(item for item in codes if item).strip()
+            if pending_code:
+                self._action_step_records_cache.append(
+                    {
+                        "code": pending_code,
+                        "success": bool(observation.get("success")),
+                        "activity": _observation_activity(observation),
+                        "activity_changed": bool(observation.get("activity_changed")),
+                        "ui_signature": _observation_ui_signature(observation),
+                        "screen_changed": screen_changed,
+                    }
+                )
+
+        if screen_changed:
+            self._repeat_actions_in_a_row = 0
+        else:
+            self._repeat_actions_in_a_row += 1
+
         stop_limit = self.config.max_repeat_actions_before_stop
         if stop_limit > 0 and self._repeat_actions_in_a_row >= stop_limit:
             return self.add_messages(
@@ -654,13 +708,17 @@ class DefaultAgent:
                     },
                 )
             )
-        return self.add_messages(
-            self.model.format_message(
-                role="user",
-                content=repeat_warning,
-                extra={"interrupt_type": "RepeatActionWarning"},
+
+        if repeat_warning is not None:
+            return self.add_messages(
+                self.model.format_message(
+                    role="user",
+                    content=repeat_warning,
+                    extra={"interrupt_type": "RepeatActionWarning"},
+                )
             )
-        )
+
+        return added
 
     def serialize(self, *extra_dicts) -> dict[str, Any]:
         last_message = self.messages[-1] if self.messages else {}

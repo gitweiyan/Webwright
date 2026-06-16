@@ -63,7 +63,11 @@ def _unfenced_json_candidates(text: str) -> list[str]:
     while start >= 0:
         candidate = _balanced_json_object(text, start)
         if candidate is not None:
-            candidates.append(candidate)
+            try:
+                json.loads(candidate)
+                candidates.append(candidate)
+            except json.JSONDecodeError:
+                pass
         start = text.find("{", start + 1)
     return candidates
 

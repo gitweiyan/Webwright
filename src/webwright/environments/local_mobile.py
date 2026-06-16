@@ -48,6 +48,7 @@ class LocalMobileEnvironmentConfig(BaseModel):
     observation_timeout_ms: int = 5000
     hierarchy_max_chars: int = 20000
     hierarchy_max_nodes: int = 160
+    screenshot_max_bytes: int = 100_000
 
 
 class LocalMobileEnvironment:
@@ -211,6 +212,34 @@ class LocalMobileEnvironment:
             )
         self._step_python_output = buffer.getvalue()
 
+    @staticmethod
+    def _compress_screenshot(path: Path, max_bytes: int) -> None:
+        """Resize *path* in-place until its file size is ≤ *max_bytes* bytes."""
+        if max_bytes <= 0:
+            return
+        try:
+            size = path.stat().st_size
+        except OSError:
+            return
+        if size <= max_bytes:
+            return
+
+        from math import sqrt
+        from PIL import Image
+
+        img = Image.open(path)
+        # PNG byte size is roughly proportional to pixel count; estimate the
+        # scale factor from the byte ratio and add a 10 % safety margin.
+        scale = min(1.0, sqrt(max_bytes / size) * 0.9)
+        for _ in range(4):  # at most 4 attempts
+            new_width = max(1, int(img.width * scale))
+            new_height = max(1, int(img.height * scale))
+            resized = img.resize((new_width, new_height), Image.LANCZOS)
+            resized.save(path, format="PNG", optimize=True)
+            if path.stat().st_size <= max_bytes:
+                return
+            scale *= 0.8  # shrink further if estimate was off
+
     def _capture_observation(
         self,
         *,
@@ -237,6 +266,7 @@ class LocalMobileEnvironment:
             try:
                 screenshot_path = self._screenshots_dir() / f"step_{self._step_index:04d}.png"
                 self._driver.screenshot(screenshot_path)
+                self._compress_screenshot(screenshot_path, self.config.screenshot_max_bytes)
             except Exception:
                 screenshot_path = None
             try:
