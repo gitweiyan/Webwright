@@ -1,10 +1,34 @@
 from __future__ import annotations
 
+import re
 import time
 from pathlib import Path
 from typing import Any
 
 from webwright.devices.snapshots import compact_android_hierarchy
+
+
+_TRAILING_POSITIONAL_INDEX = re.compile(r"^(?P<base>.+)\[(?P<index>\d+)\]\s*$")
+
+
+def normalize_xpath_position(expression: str) -> str:
+    """Rewrite ``//*[@pred][N]`` to ``(//*[@pred])[N]`` for lxml/uiautomator2.
+
+    In XPath 1.0, ``//*[@a="b"][2]`` applies ``[2]`` as a sibling-position predicate
+    on each ``*`` step (often matching nothing). Agents usually want the Nth match in
+    document order: ``(//*[@a="b"])[2]``.
+    """
+    expr = expression.strip()
+    match = _TRAILING_POSITIONAL_INDEX.match(expr)
+    if not match:
+        return expr
+    base = match.group("base")
+    index = match.group("index")
+    if not base.endswith("]"):
+        return expr
+    if base.startswith("(") and base.endswith(")"):
+        return expr
+    return f"({base})[{index}]"
 
 
 class AndroidUiautomator2Driver:
@@ -221,10 +245,11 @@ class AndroidUiautomator2Driver:
         )
 
     def click_xpath(self, expression: str, *, timeout: float = 10.0) -> None:
+        resolved = normalize_xpath_position(expression)
         try:
-            self._device().xpath(expression).click(timeout=timeout)
+            self._device().xpath(resolved).click(timeout=timeout)
         except Exception as exc:
-            raise self._action_error("click_xpath", f'"{expression}"', exc) from exc
+            raise self._action_error("click_xpath", f'"{resolved}"', exc) from exc
 
     def set_text(self, resource_id: str, text: str, *, timeout: float = 5.0) -> None:
         try:

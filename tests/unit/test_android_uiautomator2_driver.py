@@ -1,6 +1,9 @@
 from __future__ import annotations
 
-from webwright.devices.android_uiautomator2 import AndroidUiautomator2Driver
+from webwright.devices.android_uiautomator2 import (
+    AndroidUiautomator2Driver,
+    normalize_xpath_position,
+)
 
 
 class FakeUiObject:
@@ -109,6 +112,31 @@ def test_android_driver_selector_helpers_call_uiautomator_shapes():
     assert raw.xpath_objects[-1].calls == [("click", 7)]
 
     assert driver.window_size() == (1080, 2400)
+
+
+def test_normalize_xpath_position_wraps_document_order_index():
+    expr = '//*[@resource-id="com.example:id/action" and @content-desc="Remove"][2]'
+    assert normalize_xpath_position(expr) == (
+        '(//*[@resource-id="com.example:id/action" and @content-desc="Remove"])[2]'
+    )
+
+
+def test_normalize_xpath_position_leaves_step_local_index_unchanged():
+    assert normalize_xpath_position('//LinearLayout[1]/Button[2]') == '//LinearLayout[1]/Button[2]'
+
+
+def test_normalize_xpath_position_leaves_already_grouped_unchanged():
+    expr = '(//*[@content-desc="Remove"])[2]'
+    assert normalize_xpath_position(expr) == expr
+
+
+def test_android_driver_click_xpath_rewrites_trailing_document_index():
+    raw = FakeDevice()
+    driver = AndroidUiautomator2Driver()
+    driver.raw = raw
+
+    driver.click_xpath('//*[@content-desc="Remove"][2]')
+    assert raw.xpath_objects[-1].expression == '(//*[@content-desc="Remove"])[2]'
 
 
 def test_android_driver_submit_input_prefers_visible_submit_label():

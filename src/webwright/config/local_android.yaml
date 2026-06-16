@@ -181,7 +181,22 @@ agent:
     ```
     device(text="Wi-Fi").right(className="android.widget.Switch").click()
     device(text="Bluetooth").up(className="android.widget.TextView")
+    device(description="Remove", instance=1).click()
     ```
+
+    When several nodes share the same text, desc, or id, pick the **correct** one — not the first
+    match. Use a unique nearby label, `bounds`/`center`, `enabled` state, or section context in your
+    `thought`, then disambiguate:
+    ```
+    device(text="Alarm volume").right(className="android.widget.SeekBar").click()
+    driver.click_xpath('(//*[@content-desc="Remove"])[2]')
+    driver.click_xpath('//*[@content-desc="Remove"][2]')  # harness rewrites to (xpath)[N]
+    driver.click_xpath('//*[@content-desc="Decrease" and @enabled="true"]')
+    ```
+    If duplicates differ only by state, the snapshot marks exhausted controls as `enabled=false` —
+    prefer the copy still `enabled=true` when you need to keep adjusting that section.
+    Icon-only controls often expose `desc` only — use `click_desc` / `device(description=...)`, not
+    `click_text`.
 
     XPath is useful when text/resource-id selectors are not stable:
     ```
@@ -213,8 +228,8 @@ agent:
 
     ## Android Interaction Rules
     - Prefer semantic selectors from the latest UI snapshot: text, content description, and resource-id.
-    - The UI snapshot shows `text`, `desc`, `id`, `bounds`, and `center`; map `id` to uiautomator2
-      `resourceId`, and map `desc` to `description`.
+    - The UI snapshot shows `text`, `desc`, `id`, `bounds`, `center`, and `enabled=false` when a
+      control is disabled; map `id` to uiautomator2 `resourceId`, and map `desc` to `description`.
     - Use coordinate clicks only as a fallback, and base them on the latest `bounds` or `center=(x,y)`.
     - Some controls are hidden behind drawers, tabs, scroll views, bottom sheets, or overflow menus. Open or
       scroll those regions before deciding a control is unavailable.
@@ -258,6 +273,14 @@ agent:
       `wait_gone` before interacting with main content.
     - On the launcher: scan the current UI snapshot for the target app icon BEFORE swiping or opening
       the app drawer.
+    - **Duplicate elements:** If the snapshot shows multiple nodes with the same `text`, `desc`, or `id`,
+      a bare `click_text`, `click_desc`, `click_resource_id`, or unscoped XPath clicks the **first**
+      match only — often the wrong control. Read the snapshot, decide which copy your sub-goal needs
+      (section title, neighbor label, `bounds`/`center`, or `enabled` state), state that in `thought`,
+      and use a disambiguated selector (`device(..., instance=N)`, relative `.right()`/`.up()`, XPath
+      with `@enabled="true"`, or XPath anchored to a unique label). When one duplicate is
+      `enabled=false` and another is still actionable, pick the `enabled=true` copy for the section
+      you are still adjusting. After clicking, verify the intended value/screen region changed.
     - **Trust UI State Over Assumptions:** Never assume a setting has reached its limit based on the value 
       text (e.g., assuming '1.0' or '0%' is the minimum). Always trust the element's interactive state. If a 
       "Make smaller", "Minus", "Decrease", or "Next" button/frame is still `enabled=true` or `clickable=true`, 
@@ -303,8 +326,10 @@ agent:
 
     <instructions>
     Drive the live Android device one step at a time. Use the UI snapshot, screenshot, resource-id,
-    text, description, and bounds from observations to choose robust actions. For search tasks, after
-    entering text always call `driver.submit_input()` in the same step and confirm the committed
-    results page before summarizing — suggestion/autocomplete rows are not enough. When the task is complete,
-    set `done=true` in a separate response and put the answer in `final_response`.
+    text, description, and bounds from observations to choose robust actions. When several elements
+    look identical, pick the one that matches your current sub-goal — do not blindly click the first
+    match. For search tasks, after entering text always call `driver.submit_input()` in the same step
+    and confirm the committed results page before summarizing — suggestion/autocomplete rows are not
+    enough. When the task is complete, set `done=true` in a separate response and put the answer in
+    `final_response`.
     </instructions>

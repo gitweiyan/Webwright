@@ -228,6 +228,29 @@ def test_run_stops_after_max_format_errors_without_progress():
     assert agent.n_format_errors == 3
 
 
+def test_execute_actions_does_not_warn_on_first_occurrence_of_action():
+    agent = _make_agent(repeat_action_warning_threshold=2)
+    agent.messages = [
+        _assistant("driver.launch_app('com.foo')"),
+        _observation_sig(signature="sig-1", activity=".A"),
+    ]
+
+    agent.execute_actions(
+        {
+            "role": "assistant",
+            "content": "open picker",
+            "extra": {"actions": [{"python_code": "driver.click_resource_id('fab')"}]},
+        }
+    )
+
+    warning_messages = [
+        msg
+        for msg in agent.messages
+        if msg.get("extra", {}).get("interrupt_type") == "RepeatActionWarning"
+    ]
+    assert warning_messages == []
+
+
 def test_execute_actions_emits_repeat_warning_message():
     agent = _make_agent(repeat_action_warning_threshold=2)
     agent.messages = [
@@ -310,6 +333,50 @@ def test_repeat_action_warning_suppressed_when_ui_signature_changes():
     assert agent._repeat_action_warning(message, outputs) is None
 
 
+def test_execute_actions_resets_counter_on_screen_changed_despite_repeat_warning():
+    code = "driver.click_resource_id('fab')"
+
+    class FabEnv(FakeEnv):
+        def execute(self, action):
+            return {
+                "output": "",
+                "observation": {
+                    "success": True,
+                    "current_app": {"package": "com.demo", "activity": ".Picker"},
+                    "ui_signature": "picker-sig",
+                    "screen_changed": True,
+                },
+            }
+
+    agent = _make_agent(
+        repeat_action_warning_threshold=2,
+        max_repeat_actions_before_stop=3,
+    )
+    agent.env = FabEnv()
+    agent.messages = [
+        _assistant(code),
+        _observation_sig(signature="picker-sig", activity=".Picker"),
+    ]
+
+    for _ in range(4):
+        agent.execute_actions(
+            {
+                "role": "assistant",
+                "content": "retry",
+                "extra": {"actions": [{"python_code": code}]},
+            }
+        )
+        assert agent._repeat_actions_in_a_row == 0
+        assert agent.messages[-1].get("role") != "exit"
+
+    warning_messages = [
+        msg
+        for msg in agent.messages
+        if msg.get("extra", {}).get("interrupt_type") == "RepeatActionWarning"
+    ]
+    assert len(warning_messages) >= 1
+
+
 def test_execute_actions_stops_after_max_repeat_actions():
     code = "driver.click_text('BeeBeep Alarm')"
 
@@ -321,6 +388,7 @@ def test_execute_actions_stops_after_max_repeat_actions():
                     "success": True,
                     "current_app": {"package": "com.demo", "activity": ".Picker"},
                     "ui_signature": "stuck-sig",
+                    "screen_changed": False,
                 },
             }
 
@@ -351,3 +419,55 @@ def test_execute_actions_stops_after_max_repeat_actions():
 
     assert exit_seen
     assert agent._repeat_actions_in_a_row >= 3
+
+
+def test_execute_actions_stops_after_consecutive_unchanged_screens_without_repeat_warning():
+    class UnchangedScreenEnv(FakeEnv):
+        def __init__(self):
+            self._step = 0
+
+        def execute(self, action):
+            self._step += 1
+            return {
+                "output": "",
+                "observation": {
+                    "success": True,
+                    "current_app": {"package": "com.demo", "activity": ".Home"},
+                    "ui_signature": f"sig-{self._step}",
+                    "screen_changed": False,
+                },
+            }
+
+    agent = _make_agent(
+        repeat_action_warning_threshold=2,
+        max_repeat_actions_before_stop=5,
+    )
+    agent.env = UnchangedScreenEnv()
+    agent.messages = [
+        _assistant("driver.click_text('A')"),
+        _observation_sig(signature="sig-0", activity=".Home"),
+    ]
+
+    exit_seen = False
+    for step in range(6):
+        code = f"driver.click_text('action-{step}')"
+        added = agent.execute_actions(
+            {
+                "role": "assistant",
+                "content": "retry",
+                "extra": {"actions": [{"python_code": code}]},
+            }
+        )
+        if added and added[-1].get("role") == "exit":
+            exit_seen = True
+            assert added[-1]["extra"]["exit_status"] == "RepeatActionStuck"
+            break
+
+    assert exit_seen
+    assert agent._repeat_actions_in_a_row >= 5
+    warning_messages = [
+        msg
+        for msg in agent.messages
+        if msg.get("extra", {}).get("interrupt_type") == "RepeatActionWarning"
+    ]
+    assert warning_messages == []
