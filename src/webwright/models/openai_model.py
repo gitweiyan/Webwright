@@ -186,6 +186,11 @@ class OpenAIModelConfig(BaseModelConfig):
     model_name: OptStr = "gpt-4o"
     openai_api_key: OptStr = ""
     openai_endpoint: OptStr = "https://api.openai.com/v1/responses"
+    # When true, chat/completions requests include a strict JSON-schema
+    # response_format.  Supported by OpenAI and DashScope compatible-mode
+    # endpoints.  Do NOT enable for providers that don't support this
+    # parameter (e.g. DeepSeek).
+    enforce_json_schema: bool = False
 
 
 def _is_dashscope_endpoint(endpoint: str) -> bool:
@@ -220,13 +225,26 @@ class OpenAIModel(BaseModel):
     def _is_chat_completions_endpoint(self) -> bool:
         return "/chat/completions" in self.config.openai_endpoint
 
+    def _chat_completions_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
+        payload: dict[str, Any] = {
+            "model": self.config.model_name,
+            "messages": _serialize_chat_messages(messages),
+            "max_tokens": self.config.max_output_tokens,
+        }
+        if self.config.enforce_json_schema:
+            payload["response_format"] = {
+                "type": "json_schema",
+                "json_schema": {
+                    "name": "playwright_step",
+                    "strict": True,
+                    "schema": self._response_schema(),
+                },
+            }
+        return payload
+
     def _build_payload(self, messages: list[dict[str, Any]]) -> dict[str, Any]:
         if self._is_chat_completions_endpoint():
-            return {
-                "model": self.config.model_name,
-                "messages": _serialize_chat_messages(messages),
-                "max_tokens": self.config.max_output_tokens,
-            }
+            return self._chat_completions_payload(messages)
         return {
             "model": self.config.model_name,
             "input": _serialize_response_input(messages),
