@@ -15,6 +15,15 @@ class AndroidUiautomator2Driver:
         self.connect_url = connect_url or ""
         self.raw: Any = None
 
+    # ---- error helpers -------------------------------------------------------
+
+    @staticmethod
+    def _action_error(method: str, detail: str, exc: BaseException) -> RuntimeError:
+        """Wrap a uiautomator2 exception with the selector that caused it."""
+        return RuntimeError(f"driver.{method}({detail}) failed: {exc}")
+
+    # ---- connection ----------------------------------------------------------
+
     def connect(self) -> None:
         try:
             import uiautomator2 as u2
@@ -52,13 +61,20 @@ class AndroidUiautomator2Driver:
         return {"package": "", "activity": str(app)}
 
     def launch_app(self, package: str, activity: str | None = None, *, stop: bool = False) -> None:
-        if activity:
-            self._device().app_start(package, activity, stop=stop)
-        else:
-            self._device().app_start(package, stop=stop)
+        try:
+            if activity:
+                self._device().app_start(package, activity, stop=stop)
+            else:
+                self._device().app_start(package, stop=stop)
+        except Exception as exc:
+            detail = f'"{package}"' + (f', "{activity}"' if activity else "")
+            raise self._action_error("launch_app", detail, exc) from exc
 
     def stop_app(self, package: str) -> None:
-        self._device().app_stop(package)
+        try:
+            self._device().app_stop(package)
+        except Exception as exc:
+            raise self._action_error("stop_app", f'"{package}"', exc) from exc
 
     def screenshot(self, path: Path) -> None:
         path.parent.mkdir(parents=True, exist_ok=True)
@@ -121,19 +137,34 @@ class AndroidUiautomator2Driver:
         return bool(self.selector(**kwargs).wait_gone(timeout=timeout))
 
     def click_text(self, text: str, *, timeout: float = 5.0) -> None:
-        self._device()(text=text).click(timeout=timeout)
+        try:
+            self._device()(text=text).click(timeout=timeout)
+        except Exception as exc:
+            raise self._action_error("click_text", f'"{text}"', exc) from exc
 
     def click_text_contains(self, text: str, *, timeout: float = 5.0) -> None:
-        self._device()(textContains=text).click(timeout=timeout)
+        try:
+            self._device()(textContains=text).click(timeout=timeout)
+        except Exception as exc:
+            raise self._action_error("click_text_contains", f'"{text}"', exc) from exc
 
     def click_desc(self, description: str, *, timeout: float = 5.0) -> None:
-        self._device()(description=description).click(timeout=timeout)
+        try:
+            self._device()(description=description).click(timeout=timeout)
+        except Exception as exc:
+            raise self._action_error("click_desc", f'"{description}"', exc) from exc
 
     def click_desc_contains(self, description: str, *, timeout: float = 5.0) -> None:
-        self._device()(descriptionContains=description).click(timeout=timeout)
+        try:
+            self._device()(descriptionContains=description).click(timeout=timeout)
+        except Exception as exc:
+            raise self._action_error("click_desc_contains", f'"{description}"', exc) from exc
 
     def click_resource_id(self, resource_id: str, *, timeout: float = 5.0) -> None:
-        self._device()(resourceId=resource_id).click(timeout=timeout)
+        try:
+            self._device()(resourceId=resource_id).click(timeout=timeout)
+        except Exception as exc:
+            raise self._action_error("click_resource_id", f'"{resource_id}"', exc) from exc
 
     def click_if_exists(self, *, timeout: float = 5.0, **kwargs) -> bool:
         obj = self.selector(**kwargs)
@@ -178,42 +209,66 @@ class AndroidUiautomator2Driver:
             '//*[contains(@content-desc, "搜索") and @clickable="true"]',
             '//*[@class="android.widget.EditText"]',
         ):
-            obj = self._device().xpath(expression)
-            if obj.exists:
-                obj.click(timeout=timeout)
-                return
+            try:
+                obj = self._device().xpath(expression)
+                if obj.exists:
+                    obj.click(timeout=timeout)
+                    return
+            except Exception as exc:
+                raise self._action_error("click_search_bar", f'xpath="{expression}"', exc) from exc
         raise RuntimeError(
             "No search bar found; inspect the UI snapshot for a search container resource-id."
         )
 
     def click_xpath(self, expression: str, *, timeout: float = 10.0) -> None:
-        self._device().xpath(expression).click(timeout=timeout)
+        try:
+            self._device().xpath(expression).click(timeout=timeout)
+        except Exception as exc:
+            raise self._action_error("click_xpath", f'"{expression}"', exc) from exc
 
     def set_text(self, resource_id: str, text: str, *, timeout: float = 5.0) -> None:
-        obj = self._device()(resourceId=resource_id)
-        obj.wait(timeout=timeout)
-        obj.set_text(text)
+        try:
+            obj = self._device()(resourceId=resource_id)
+            obj.wait(timeout=timeout)
+            obj.set_text(text)
+        except Exception as exc:
+            raise self._action_error(
+                "set_text", f'resourceId="{resource_id}", "{text}"', exc
+            ) from exc
 
     def set_selector_text(self, text: str, *, timeout: float = 5.0, clear: bool = True, **kwargs) -> None:
-        obj = self.selector(**kwargs)
-        obj.wait(timeout=timeout)
-        if clear:
-            try:
-                obj.clear_text()
-            except Exception:
-                pass
-        obj.set_text(text)
+        try:
+            obj = self.selector(**kwargs)
+            obj.wait(timeout=timeout)
+            if clear:
+                try:
+                    obj.clear_text()
+                except Exception:
+                    pass
+            obj.set_text(text)
+        except Exception as exc:
+            raise self._action_error(
+                "set_selector_text", f"{kwargs!r}, \"{text}\"", exc
+            ) from exc
 
     def scroll_to_text(self, text: str, *, max_swipes: int = 20) -> bool:
-        return bool(self._device()(scrollable=True).scroll.to(text=text, max_swipes=max_swipes))
+        try:
+            return bool(
+                self._device()(scrollable=True).scroll.to(text=text, max_swipes=max_swipes)
+            )
+        except Exception as exc:
+            raise self._action_error("scroll_to_text", f'"{text}"', exc) from exc
 
     def scroll_to_desc(self, description: str, *, max_swipes: int = 20) -> bool:
-        return bool(
-            self._device()(scrollable=True).scroll.to(
-                description=description,
-                max_swipes=max_swipes,
+        try:
+            return bool(
+                self._device()(scrollable=True).scroll.to(
+                    description=description,
+                    max_swipes=max_swipes,
+                )
             )
-        )
+        except Exception as exc:
+            raise self._action_error("scroll_to_desc", f'"{description}"', exc) from exc
 
     def swipe_ext(self, direction: str, *, scale: float = 0.8) -> None:
         self._device().swipe_ext(direction, scale=scale)
