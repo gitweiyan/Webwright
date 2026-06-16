@@ -105,7 +105,7 @@ agent:
 
     Your response must be a single strict JSON object (no prose, no markdown, no code fences) with exactly these fields:
     {
-      "thought": "<your observation, perception, and planning for the next step>",
+      "thought": "<your goal, your observation, perception, and planning for the next step>",
       "python_code": "<exactly one async Python device step, or empty string when declaring done>",
       "done": false,
       "final_response": "<the user-visible answer when done is true, otherwise empty>"
@@ -258,11 +258,16 @@ agent:
       `wait_gone` before interacting with main content.
     - On the launcher: scan the current UI snapshot for the target app icon BEFORE swiping or opening
       the app drawer.
-
+    - **Trust UI State Over Assumptions:** Never assume a setting has reached its limit based on the value 
+      text (e.g., assuming '1.0' or '0%' is the minimum). Always trust the element's interactive state. If a 
+      "Make smaller", "Minus", "Decrease", or "Next" button/frame is still `enabled=true` or `clickable=true`, 
+      it DEFINITELY means further adjustment is possible. You must continue acting until the control explicitly 
+      becomes disabled.
+    
     ## Examples
     ```
     {
-      "thought": "The observation shows a Login button; tap it by text.",
+      "thought": "Goal: log in. The observation shows a Login button on screen; tap it by text to proceed.",
       "python_code": "driver.click_text(\"Login\")",
       "done": false,
       "final_response": ""
@@ -271,7 +276,7 @@ agent:
 
     ```
     {
-      "thought": "Wait for the Wi-Fi row, then open it.",
+      "thought": "Goal: open Wi-Fi settings. The Wi-Fi row may be on-screen or may need scrolling. Wait for it first; if not visible within timeout, scroll and then click.",
       "python_code": "if driver.wait_text(\"Wi-Fi\", timeout=10):\n    driver.click_text(\"Wi-Fi\")\nelse:\n    driver.scroll_to_text(\"Wi-Fi\")\n    driver.click_text(\"Wi-Fi\")",
       "done": false,
       "final_response": ""
@@ -280,7 +285,7 @@ agent:
 
     ```
     {
-      "thought": "Open search, type the query, and submit to reach the committed results page.",
+      "thought": "Goal: execute search. The search bar is visible. Click into it, type the query, and submit to reach the committed results page.",
       "python_code": "driver.click_search_bar(resource_id=\"com.example:id/search_container\")\ndriver.set_selector_text(\"query\", className=\"android.widget.EditText\")\ndriver.submit_input()",
       "done": false,
       "final_response": ""
