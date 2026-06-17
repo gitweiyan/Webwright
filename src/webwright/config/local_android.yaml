@@ -119,8 +119,8 @@ agent:
     - `driver`: a helper adapter with methods such as `click_text`, `click_desc`, `click_resource_id`,
       `click_text_contains`, `click_if_text`, `click_search_bar`, `submit_input`, `exists_text`,
       `wait_text`, `set_selector_text`, `scroll_to_text`, `click_xpath`, `selector`, `xpath`, `click`,
-      `swipe`, `swipe_ext`, `press`, `input_text`, `launch_app`, `current_app`, `window_size`, and
-      `snapshot_text`.
+      `swipe`, `swipe_ext`, `drag_to`, `press`, `input_text`, `launch_app`, `current_app`, `window_size`,
+      and `snapshot_text`.
     - `task`: the task metadata.
     - `asyncio`: available for sleeps and async helper code.
 
@@ -136,7 +136,6 @@ agent:
     driver.click_text("Settings")
     driver.click_text_contains("Wi-Fi")
     driver.click_if_text("跳过广告")
-    driver.click_if_text("重新再试")
     driver.click_desc("Search")
     driver.click_resource_id("com.android.settings:id/search_action_bar")
     driver.click_search_bar(resource_id="com.example:id/rcSearchContainer")
@@ -226,6 +225,21 @@ agent:
     driver.hide_keyboard()
     ```
 
+    ## SeekBar / Slider
+    SeekBars are **not** text fields — never use `set_text` or `set_selector_text` on them.  Read
+    `bounds` / `center` from the UI snapshot and use coordinate gestures along the track:
+    ```
+    # bounds=[42,153][1038,279] center=(540,216) → set to maximum
+    driver.click(1038, 216)                 # tap right edge
+    driver.swipe(42, 216, 1038, 216)        # drag left→right
+    # set to minimum
+    driver.click(42, 216)                   # tap left edge
+    driver.swipe(1038, 216, 42, 216)        # drag right→left
+    ```
+    Use `driver.click(x, y)` or `driver.swipe(...)` — `device.click(...)` does NOT accept `x`/`y`.
+    After adjusting, verify the snapshot or summary row reflects the new value.  Do NOT declare
+    `done=true` while the UI still shows the old value.
+
     ## Android Interaction Rules
     - Prefer semantic selectors from the latest UI snapshot: text, content description, and resource-id.
     - The UI snapshot shows `text`, `desc`, `id`, `bounds`, `center`, and `enabled=false` when a
@@ -236,6 +250,9 @@ agent:
     - If an app exposes a dedicated control for a requirement, use that control instead of only typing a broad search query.
     - For text-entry tasks: after typing in an EditText, call `driver.submit_input()` in the same step.
       Do NOT treat autocomplete/suggestion dropdowns as final results — wait for the committed page.
+    - For SeekBar / Slider controls: use `driver.click`, `driver.swipe`, or `driver.drag_to` on the
+      track (see SeekBar section above). Never use `set_text` on a SeekBar. Verify the summary or
+      slider value in the snapshot before `done=true`.
     - Single-select / radio lists (ringtone pickers, account choosers, theme lists, etc.) COMMIT on a
       single tap: tapping a row selects it (a checkmark / `selected=true` appears) and the picker usually
       does NOT auto-close and has NO separate "OK". Once the desired row shows selected, press the Back /
@@ -257,12 +274,6 @@ agent:
         3. resource-id such as *SearchContainer*, *search_bar*, *ivSearch*
       Use `driver.click_search_bar(resource_id=...)` or click the container — never click hint text
       when a container or icon is available.
-    - Typing a query may only show suggestions. After `set_text` / `set_selector_text`, always call
-      `driver.submit_input()` **in the same step** and verify the committed results page before
-      summarizing.  Never emit a standalone ``submit_input()`` — the harness already ran it when you
-      paired it with ``set_selector_text`` in the previous turn.  If suggestions appear instead of
-      results, click the suggestion row that matches your query (usually the first one) rather than
-      re-calling ``submit_input()``.
     - Judge progress from the automatic Observation (UI snapshot, screenshot, and "Screen changed since
       last step" line) — NOT from `current_app`. The observation's `current_app` field is best-effort
       and can briefly report a stale or background package (e.g. a lingering Maps activity) even though
@@ -274,19 +285,14 @@ agent:
     - On the launcher: scan the current UI snapshot for the target app icon BEFORE swiping or opening
       the app drawer.
     - **Duplicate elements:** If the snapshot shows multiple nodes with the same `text`, `desc`, or `id`,
-      a bare `click_text`, `click_desc`, `click_resource_id`, or unscoped XPath clicks the **first**
-      match only — often the wrong control. Read the snapshot, decide which copy your sub-goal needs
-      (section title, neighbor label, `bounds`/`center`, or `enabled` state), state that in `thought`,
-      and use a disambiguated selector (`device(..., instance=N)`, relative `.right()`/`.up()`, XPath
-      with `@enabled="true"`, or XPath anchored to a unique label). When one duplicate is
-      `enabled=false` and another is still actionable, pick the `enabled=true` copy for the section
-      you are still adjusting. After clicking, verify the intended value/screen region changed.
+      a bare `click_text` / `click_desc` clicks the **first** match only.  Use the disambiguation
+      patterns in §uiautomator2 Patterns (`instance=N`, `.right()`/`.up()`, `@enabled` in XPath)
+      and verify the intended section changed.
     - **Trust UI State Over Assumptions:** Never assume a setting has reached its limit based on the value 
       text (e.g., assuming '1.0' or '0%' is the minimum). Always trust the element's interactive state. If a 
       "Make smaller", "Minus", "Decrease", or "Next" button/frame is still `enabled=true` or `clickable=true`, 
       it DEFINITELY means further adjustment is possible. You must continue acting until the control explicitly 
       becomes disabled.
-    
     ## Examples
     ```
     {
@@ -315,6 +321,15 @@ agent:
     }
     ```
 
+    ```
+    {
+      "thought": "Goal: set brightness to max. Brightness dialog open; SeekBar bounds=[42,153][1038,279] center=(540,216). Swipe right edge to set maximum, then verify summary shows 100%.",
+      "python_code": "driver.swipe(42, 216, 1038, 216)",
+      "done": false,
+      "final_response": ""
+    }
+    ```
+
   instance_template: |
     Task: {{ task }}
     {% if task_id %}Task ID: {{ task_id }}
@@ -326,10 +341,7 @@ agent:
 
     <instructions>
     Drive the live Android device one step at a time. Use the UI snapshot, screenshot, resource-id,
-    text, description, and bounds from observations to choose robust actions. When several elements
-    look identical, pick the one that matches your current sub-goal — do not blindly click the first
-    match. For search tasks, after entering text always call `driver.submit_input()` in the same step
-    and confirm the committed results page before summarizing — suggestion/autocomplete rows are not
-    enough. When the task is complete, set `done=true` in a separate response and put the answer in
-    `final_response`.
+    text, description, and bounds from observations to choose robust actions. When the task is
+    complete, set `done=true` in a **separate** response with empty `python_code` and put the
+    answer in `final_response`.
     </instructions>
