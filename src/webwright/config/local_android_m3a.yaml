@@ -1,0 +1,32 @@
+# Live Android device via accessibility forwarder + M3A JSON actions (ADB actuation).
+#
+# Actuation uses ADB shell input (not uiautomator2) so the forwarder a11y service
+# remains active while reading the UI tree.
+#
+# Prerequisites:
+#   pip install -e .[android]
+#   adb devices
+#   python tools/a11y/grpc_receiver.py --device emulator-5554 --setup --serve
+#
+# Scripted P2 verification (no LLM):
+#   python scripts/p2_verify_forwarder_m3a_env.py --device emulator-5554
+#
+# Full M3A step with LLM (optional):
+#   uv run python -m webwright.run.cli \
+#     -c base.yaml -c local_android_m3a.yaml -c model_qwen_vision.yaml \
+#     -c environment.device_serial=emulator-5554 \
+#     -t "Open Settings" --task-id m3a_settings -o outputs/m3a
+
+environment:
+  environment_class: local_android_m3a
+  device_serial:
+  connect_url:
+  forwarder_url: http://127.0.0.1:8765
+  wait_after_action_seconds: 1.5
+
+agent:
+  agent_class: m3a_android
+  step_limit: 25
+  wait_after_action_seconds: 2.0
+  transition_pause: 1.0
+  go_home_on_reset: true

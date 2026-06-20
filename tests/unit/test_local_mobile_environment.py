@@ -68,6 +68,7 @@ def test_get_environment_resolves_local_android():
 
 
 def test_local_mobile_environment_executes_python_code(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_mobile, "list_adb_devices", lambda: (["emulator-5554"], None))
     monkeypatch.setitem(local_mobile._DRIVER_MAPPING, ("android", "fake"), FakeDriver)
     env = local_mobile.LocalMobileEnvironment(
         platform="android",
@@ -85,6 +86,7 @@ def test_local_mobile_environment_executes_python_code(tmp_path, monkeypatch):
     assert "raw-device" in result["output"]
     assert observation["current_app"]["package"] == "com.demo"
     assert "Login" in observation["ui_snapshot"]
+    assert "button" in observation["semantic_summary"]
     assert Path(observation["screenshot_path"]).exists()
     assert Path(observation["hierarchy_path"]).exists()
 
@@ -102,6 +104,7 @@ class ActivityTrackingDriver(FakeDriver):
 
 
 def test_local_mobile_observation_tracks_activity_change(tmp_path, monkeypatch):
+    monkeypatch.setattr(local_mobile, "list_adb_devices", lambda: (["emulator-5554"], None))
     monkeypatch.setitem(local_mobile._DRIVER_MAPPING, ("android", "fake"), ActivityTrackingDriver)
     env = local_mobile.LocalMobileEnvironment(
         platform="android",

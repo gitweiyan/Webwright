@@ -7,6 +7,7 @@ from webwright import Agent, Environment, Model
 
 _AGENT_MAPPING = {
     "default": "webwright.agents.default.DefaultAgent",
+    "m3a_android": "webwright.agents.m3a_android.M3aAndroidAgent",
 }
 
 

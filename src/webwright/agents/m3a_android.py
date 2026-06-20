@@ -1,0 +1,263 @@
+from __future__ import annotations
+
+import base64
+import hashlib
+import json
+from pathlib import Path
+from typing import Any
+
+import numpy as np
+from PIL import Image
+from pydantic import BaseModel
+
+from android_world.agents import infer
+from android_world.env import json_action, representation_utils
+from webwright.android_agent import m3a as m3a_module
+from webwright.android_agent.base_agent import AgentInteractionResult
+from webwright import Environment, Model
+from webwright.environments.local_android_m3a import LocalAndroidM3aEnvironment
+
+
+class WebwrightMultimodalLlmWrapper(infer.MultimodalLlmWrapper):
+    """Bridge Webwright vision models to AndroidWorld M3A ``predict_mm``."""
+
+    def __init__(self, model: Model):
+        self._model = model
+
+    def predict_mm(
+        self, text_prompt: str, images: list[np.ndarray]
+    ) -> tuple[str, bool | None, Any]:
+        content: list[dict[str, Any]] = [{"type": "input_text", "text": text_prompt}]
+        for image in images:
+            jpeg_bytes = infer.array_to_jpeg_bytes(image)
+            encoded = base64.b64encode(jpeg_bytes).decode("ascii")
+            content.append(
+                {
+                    "type": "input_image",
+                    "image_url": f"data:image/jpeg;base64,{encoded}",
+                    "detail": "high",
+                }
+            )
+        raw_text = self._model([{"role": "user", "content": content}])
+        return raw_text, None, raw_text
+
+
+class M3aAndroidAgentConfig(BaseModel):
+    step_limit: int = 25
+    wait_after_action_seconds: float = 2.0
+    transition_pause: float | None = 1.0
+    go_home_on_reset: bool = True
+    output_path: Path | None = None
+
+
+def _run_output_dir(output_path: Path | None) -> Path | None:
+    if output_path is None:
+        return None
+    return output_path.parent
+
+
+def _ui_element_to_dict(element: representation_utils.UIElement) -> dict[str, Any]:
+    row: dict[str, Any] = {}
+    for key, value in element.__dict__.items():
+        if value is None:
+            continue
+        if isinstance(value, representation_utils.BoundingBox):
+            row[key] = {
+                "x_min": int(value.x_min),
+                "x_max": int(value.x_max),
+                "y_min": int(value.y_min),
+                "y_max": int(value.y_max),
+            }
+        else:
+            row[key] = value
+    return row
+
+
+def _ui_elements_signature(elements: list[representation_utils.UIElement]) -> str:
+    parts: list[str] = []
+    for element in elements:
+        bbox = element.bbox_pixels
+        bbox_text = (
+            f"{bbox.x_min},{bbox.y_min},{bbox.x_max},{bbox.y_max}" if bbox is not None else ""
+        )
+        parts.append(
+            "|".join(
+                [
+                    element.package_name or "",
+                    element.resource_name or "",
+                    element.text or "",
+                    element.content_description or "",
+                    bbox_text,
+                    str(element.is_clickable),
+                ]
+            )
+        )
+    normalized = "\n".join(parts)
+    if not normalized:
+        return ""
+    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
+
+
+def _save_screenshot(path: Path, pixels: np.ndarray) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    Image.fromarray(pixels).save(path)
+
+
+def _action_to_dict(action: Any) -> dict[str, Any] | None:
+    if action is None:
+        return None
+    if isinstance(action, json_action.JSONAction):
+        return {
+            "action_type": action.action_type,
+            "index": action.index,
+            "x": action.x,
+            "y": action.y,
+            "text": action.text,
+            "direction": action.direction,
+            "app_name": action.app_name,
+            "goal_status": action.goal_status,
+        }
+    return {"raw": str(action)}
+
+
+def _persist_step_artifacts(
+    step_index: int,
+    step_data: dict[str, Any],
+    output_dir: Path,
+) -> dict[str, Any]:
+    """Write per-step files and return a compact JSON-serializable record."""
+    step_name = f"step_{step_index:04d}"
+    screenshots_dir = output_dir / "screenshots"
+    ui_elements_dir = output_dir / "ui_elements"
+    steps_dir = output_dir / "steps"
+
+    screenshot_before = screenshots_dir / f"{step_name}_before.png"
+    screenshot_after = screenshots_dir / f"{step_name}_after.png"
+    ui_elements_path = ui_elements_dir / f"{step_name}_before.json"
+    step_record_path = steps_dir / f"{step_name}.json"
+
+    before_ui = step_data.get("before_ui_elements") or []
+    before_signature = _ui_elements_signature(before_ui)
+
+    before_pixels = step_data.get("before_screenshot_with_som")
+    if isinstance(before_pixels, np.ndarray):
+        _save_screenshot(screenshot_before, before_pixels)
+
+    after_pixels = step_data.get("after_screenshot_with_som")
+    if isinstance(after_pixels, np.ndarray):
+        _save_screenshot(screenshot_after, after_pixels)
+
+    ui_elements_dir.mkdir(parents=True, exist_ok=True)
+    ui_elements_path.write_text(
+        json.dumps(
+            {
+                "before_signature": before_signature,
+                "before": [_ui_element_to_dict(el) for el in before_ui],
+            },
+            indent=2,
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+
+    action = _action_to_dict(step_data.get("action_output_json"))
+    compact = {
+        "step": step_index,
+        "action": action,
+        "action_reason": step_data.get("action_reason"),
+        "action_output": step_data.get("action_output"),
+        "summary": step_data.get("summary"),
+        "before_signature": before_signature,
+        "screenshot_before": str(screenshot_before.relative_to(output_dir))
+        if screenshot_before.exists()
+        else None,
+        "screenshot_after": str(screenshot_after.relative_to(output_dir))
+        if screenshot_after.exists()
+        else None,
+        "ui_elements_before": str(ui_elements_path.relative_to(output_dir)),
+    }
+
+    steps_dir.mkdir(parents=True, exist_ok=True)
+    step_record_path.write_text(json.dumps(compact, indent=2, ensure_ascii=False), encoding="utf-8")
+    return compact
+
+
+class M3aAndroidAgent:
+    """Webwright agent that runs one M3A step per ``run`` loop iteration."""
+
+    def __init__(self, model: Model, env: Environment, **kwargs):
+        if not isinstance(env, LocalAndroidM3aEnvironment):
+            raise TypeError("M3aAndroidAgent requires LocalAndroidM3aEnvironment.")
+        self.model = model
+        self.env = env
+        self.config = M3aAndroidAgentConfig(**kwargs)
+        self._m3a: m3a_module.M3A | None = None
+
+    def _ensure_m3a(self) -> m3a_module.M3A:
+        if self._m3a is None:
+            self._m3a = m3a_module.M3A(
+                self.env.async_env,
+                WebwrightMultimodalLlmWrapper(self.model),
+                wait_after_action_seconds=self.config.wait_after_action_seconds,
+            )
+            if self.config.transition_pause is not None:
+                self._m3a.transition_pause = self.config.transition_pause
+        return self._m3a
+
+    def run(self, task: str, **kwargs) -> dict[str, Any]:
+        del kwargs
+        m3a = self._ensure_m3a()
+        m3a.reset(go_home_on_reset=self.config.go_home_on_reset)
+        output_dir = _run_output_dir(self.config.output_path)
+
+        steps: list[dict[str, Any]] = []
+        done = False
+        final_response = ""
+        for step_index in range(1, self.config.step_limit + 1):
+            result: AgentInteractionResult = m3a.step(task)
+            step_data = result.data
+            if output_dir is not None:
+                steps.append(_persist_step_artifacts(step_index, step_data, output_dir))
+            else:
+                steps.append(
+                    {
+                        "step": step_index,
+                        "action": _action_to_dict(step_data.get("action_output_json")),
+                        "summary": step_data.get("summary"),
+                    }
+                )
+            done = result.done
+            action_json = step_data.get("action_output_json")
+            if action_json is not None and getattr(action_json, "action_type", None) == "answer":
+                final_response = getattr(action_json, "text", "") or final_response
+            if done:
+                break
+
+        payload = {
+            "task": task,
+            "done": done,
+            "steps": steps,
+            "final_response": final_response,
+            "submission": final_response,
+            "exit_status": "done" if done else "step_limit",
+        }
+        if self.config.output_path is not None:
+            self.config.output_path.parent.mkdir(parents=True, exist_ok=True)
+            self.config.output_path.write_text(
+                json.dumps(payload, indent=2, ensure_ascii=False),
+                encoding="utf-8",
+            )
+        return payload
+
+    def save(self, path: Path | None, *extra_dicts) -> dict[str, Any]:
+        merged: dict[str, Any] = {
+            "agent": self.config.model_dump(mode="json"),
+            "history": (self._m3a.history if self._m3a is not None else []),
+        }
+        for extra in extra_dicts:
+            if isinstance(extra, dict):
+                merged.update(extra)
+        if path is not None:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            path.write_text(json.dumps(merged, indent=2, default=str), encoding="utf-8")
+        return merged

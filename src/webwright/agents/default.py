@@ -354,7 +354,7 @@ class DefaultAgent:
         if len(obs_indices) <= n:
             return
         placeholder = "(Snapshot pruned; see most recent observation)"
-        snapshot_keys = ("aria_snapshot", "ui_snapshot")
+        snapshot_keys = ("aria_snapshot", "ui_snapshot", "semantic_summary")
         for idx in obs_indices[:-n]:
             msg = self.messages[idx]
             obs = msg["extra"]["observation"]

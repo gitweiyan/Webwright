@@ -23,6 +23,14 @@ dependencies = [
 android = [
     "uiautomator2>=3.0",
 ]
+m3a = [
+    "numpy>=1.26",
+    "immutabledict>=2.0",
+    "fuzzywuzzy>=0.18",
+    "python-Levenshtein>=0.21",
+    "dm_env>=1.6",
+    "absl-py>=2.1",
+]
 
 [project.scripts]
 webwright = "webwright.run.cli:app"
