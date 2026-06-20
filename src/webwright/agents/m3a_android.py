@@ -18,18 +18,33 @@ from webwright import Environment, Model
 from webwright.environments.local_android_m3a import LocalAndroidM3aEnvironment
 
 
+from webwright.utils.vision_images import compress_image_for_vision
+
+
 class WebwrightMultimodalLlmWrapper(infer.MultimodalLlmWrapper):
     """Bridge Webwright vision models to AndroidWorld M3A ``predict_mm``."""
 
-    def __init__(self, model: Model):
+    def __init__(
+        self,
+        model: Model,
+        *,
+        vision_image_max_bytes: int = 100_000,
+        vision_image_max_long_edge: int | None = 1280,
+    ):
         self._model = model
+        self._vision_image_max_bytes = vision_image_max_bytes
+        self._vision_image_max_long_edge = vision_image_max_long_edge
 
     def predict_mm(
         self, text_prompt: str, images: list[np.ndarray]
     ) -> tuple[str, bool | None, Any]:
         content: list[dict[str, Any]] = [{"type": "input_text", "text": text_prompt}]
         for image in images:
-            jpeg_bytes = infer.array_to_jpeg_bytes(image)
+            jpeg_bytes = compress_image_for_vision(
+                image,
+                max_bytes=self._vision_image_max_bytes,
+                max_long_edge=self._vision_image_max_long_edge,
+            )
             encoded = base64.b64encode(jpeg_bytes).decode("ascii")
             content.append(
                 {
@@ -47,6 +62,8 @@ class M3aAndroidAgentConfig(BaseModel):
     wait_after_action_seconds: float = 2.0
     transition_pause: float | None = 1.0
     go_home_on_reset: bool = True
+    vision_image_max_bytes: int = 100_000
+    vision_image_max_long_edge: int | None = 1280
     output_path: Path | None = None
 
 
@@ -197,7 +214,11 @@ class M3aAndroidAgent:
         if self._m3a is None:
             self._m3a = m3a_module.M3A(
                 self.env.async_env,
-                WebwrightMultimodalLlmWrapper(self.model),
+                WebwrightMultimodalLlmWrapper(
+                    self.model,
+                    vision_image_max_bytes=self.config.vision_image_max_bytes,
+                    vision_image_max_long_edge=self.config.vision_image_max_long_edge,
+                ),
                 wait_after_action_seconds=self.config.wait_after_action_seconds,
             )
             if self.config.transition_pause is not None:

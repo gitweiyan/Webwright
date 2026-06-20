@@ -30,3 +30,5 @@ agent:
   wait_after_action_seconds: 2.0
   transition_pause: 1.0
   go_home_on_reset: true
+  vision_image_max_bytes: 100000
+  vision_image_max_long_edge: 1280
