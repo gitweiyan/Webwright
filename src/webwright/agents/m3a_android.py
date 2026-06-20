@@ -98,7 +98,9 @@ def _ui_element_to_dict(element: representation_utils.UIElement) -> dict[str, An
 
 def _save_screenshot(path: Path, pixels: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    Image.fromarray(pixels).save(path)
+    jpeg_path = path if path.suffix.lower() in {".jpg", ".jpeg"} else path.with_suffix(".jpg")
+    jpeg_bytes = compress_image_for_vision(pixels, max_bytes=150_000, max_long_edge=1280)
+    jpeg_path.write_bytes(jpeg_bytes)
 
 
 def _action_to_dict(action: Any) -> dict[str, Any] | None:
@@ -129,8 +131,8 @@ def _persist_step_artifacts(
     ui_elements_dir = output_dir / "ui_elements"
     steps_dir = output_dir / "steps"
 
-    screenshot_before = screenshots_dir / f"{step_name}_before.png"
-    screenshot_after = screenshots_dir / f"{step_name}_after.png"
+    screenshot_before = screenshots_dir / f"{step_name}_before.jpg"
+    screenshot_after = screenshots_dir / f"{step_name}_after.jpg"
     ui_elements_path = ui_elements_dir / f"{step_name}_before.json"
     ui_elements_after_path = ui_elements_dir / f"{step_name}_after.json"
     step_record_path = steps_dir / f"{step_name}.json"
