@@ -124,10 +124,15 @@ def _persist_step_artifacts(
     screenshot_before = screenshots_dir / f"{step_name}_before.png"
     screenshot_after = screenshots_dir / f"{step_name}_after.png"
     ui_elements_path = ui_elements_dir / f"{step_name}_before.json"
+    ui_elements_after_path = ui_elements_dir / f"{step_name}_after.json"
     step_record_path = steps_dir / f"{step_name}.json"
 
     before_ui = step_data.get("before_ui_elements") or []
-    before_signature = ui_elements_signature(before_ui)
+    after_ui = step_data.get("after_ui_elements") or []
+    before_signature = step_data.get("before_signature") or ui_elements_signature(before_ui)
+    after_signature = step_data.get("after_signature")
+    if after_signature is None and after_ui:
+        after_signature = ui_elements_signature(after_ui)
 
     before_pixels = step_data.get("before_screenshot_with_som")
     if isinstance(before_pixels, np.ndarray):
@@ -149,6 +154,18 @@ def _persist_step_artifacts(
         ),
         encoding="utf-8",
     )
+    if after_ui:
+        ui_elements_after_path.write_text(
+            json.dumps(
+                {
+                    "after_signature": after_signature,
+                    "after": [_ui_element_to_dict(el) for el in after_ui],
+                },
+                indent=2,
+                ensure_ascii=False,
+            ),
+            encoding="utf-8",
+        )
 
     action = _action_to_dict(step_data.get("action_output_json"))
     compact = {
@@ -158,6 +175,8 @@ def _persist_step_artifacts(
         "action_output": step_data.get("action_output"),
         "summary": step_data.get("summary"),
         "before_signature": before_signature,
+        "after_signature": after_signature,
+        "ui_changed": step_data.get("ui_changed"),
         "screenshot_before": str(screenshot_before.relative_to(output_dir))
         if screenshot_before.exists()
         else None,
@@ -165,6 +184,9 @@ def _persist_step_artifacts(
         if screenshot_after.exists()
         else None,
         "ui_elements_before": str(ui_elements_path.relative_to(output_dir)),
+        "ui_elements_after": str(ui_elements_after_path.relative_to(output_dir))
+        if after_ui
+        else None,
     }
 
     steps_dir.mkdir(parents=True, exist_ok=True)

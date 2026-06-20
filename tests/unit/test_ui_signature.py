@@ -55,9 +55,17 @@ def test_normalize_signature_text_replaces_clock_values():
     assert normalize_signature_text("9:34 PM") == "<T> PM"
 
 
-def test_should_exclude_systemui_package():
+def test_should_exclude_status_bar_clock():
     assert should_exclude_from_signature(
         package_name="com.android.systemui",
         resource_name="com.android.systemui:id/clock",
         bbox_y_max=132,
+    )
+
+
+def test_should_keep_systemui_quick_settings():
+    assert not should_exclude_from_signature(
+        package_name="com.android.systemui",
+        resource_name="com.android.systemui:id/tile",
+        bbox_y_max=284,
     )

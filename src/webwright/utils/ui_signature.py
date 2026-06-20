@@ -47,12 +47,9 @@ def should_exclude_from_signature(
     resource_name: str | None,
     bbox_y_max: int | None,
 ) -> bool:
-    package = package_name or ""
-    if package in _SYSTEM_PACKAGES:
-        return True
     if short_resource_id(resource_name) in _VOLATILE_RESOURCE_SUFFIXES:
         return True
-    if bbox_y_max is not None and bbox_y_max <= _STATUS_BAR_MAX_Y and package in _SYSTEM_PACKAGES:
+    if bbox_y_max is not None and bbox_y_max <= _STATUS_BAR_MAX_Y:
         return True
     return False
 
