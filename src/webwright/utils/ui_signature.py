@@ -23,6 +23,8 @@ class _SignatureElement(Protocol):
     package_name: str | None
     resource_name: str | None
     is_clickable: bool
+    is_checked: bool | None
+    is_selected: bool | None
 
     @property
     def bbox_pixels(self) -> object | None: ...
@@ -78,6 +80,8 @@ def signature_key_for_element(element: _SignatureElement) -> str | None:
             normalize_signature_text(element.content_description),
             bbox_text,
             str(element.is_clickable),
+            str(getattr(element, "is_checked", None)),
+            str(getattr(element, "is_selected", None)),
         ]
     )
 

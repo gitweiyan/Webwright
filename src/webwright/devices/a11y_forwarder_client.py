@@ -41,6 +41,10 @@ class ForwarderUIElement:
     bbox_pixels: BoundingBox | None = None
     is_clickable: bool = False
     is_visible: bool = True
+    is_checked: bool | None = None
+    is_checkable: bool | None = None
+    is_selected: bool | None = None
+    is_scrollable: bool | None = None
 
 
 def parse_bounding_box(value: Any) -> BoundingBox | None:
@@ -78,7 +82,17 @@ def parse_ui_element(row: dict[str, Any], *, index: int) -> ForwarderUIElement:
         bbox_pixels=parse_bounding_box(row.get("bbox_pixels")),
         is_clickable=bool(row.get("is_clickable")),
         is_visible=bool(row.get("is_visible", True)),
+        is_checked=_optional_bool(row.get("is_checked")),
+        is_checkable=_optional_bool(row.get("is_checkable")),
+        is_selected=_optional_bool(row.get("is_selected")),
+        is_scrollable=_optional_bool(row.get("is_scrollable")),
     )
+
+
+def _optional_bool(value: Any) -> bool | None:
+    if value is None:
+        return None
+    return bool(value)
 
 
 class A11yForwarderClient:
@@ -163,6 +177,10 @@ def to_representation_ui_elements(
                 bbox_pixels=bbox,
                 is_clickable=element.is_clickable,
                 is_visible=element.is_visible,
+                is_checked=element.is_checked,
+                is_checkable=element.is_checkable,
+                is_selected=element.is_selected,
+                is_scrollable=element.is_scrollable,
                 package_name=element.package_name,
                 resource_name=element.resource_name,
             )

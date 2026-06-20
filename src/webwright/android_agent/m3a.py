@@ -511,6 +511,21 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
       )
 
     if converted_action.action_type == 'status':
+      if converted_action.goal_status == 'complete' and self.history:
+        last_step = self.history[-1]
+        last_action = last_step.get('action_output_json')
+        if (
+            last_step.get('ui_changed') is False
+            and isinstance(last_action, json_action.JSONAction)
+            and last_action.action_type in transition_guard.ACTIONS_EXPECTING_UI_CHANGE
+        ):
+          logging.info('Rejected premature status=complete after unchanged action.')
+          step_data['summary'] = (
+              'Rejected status=complete because the previous action did not change the UI. '
+              'Verify the goal before completing.'
+          )
+          self.history.append(step_data)
+          return base_agent.AgentInteractionResult(False, step_data)
       if converted_action.goal_status == 'infeasible':
         logging.info('Agent stopped since it thinks mission impossible.')
       step_data['summary'] = 'Agent thinks the request has been completed.'

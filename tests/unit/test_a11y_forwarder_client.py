@@ -12,13 +12,30 @@ def test_parse_bounding_box_from_string():
     assert bbox.center == (63, 205)
 
 
+def test_parse_ui_element_includes_toggle_state():
+    element = parse_ui_element(
+        {
+            "class_name": "android.widget.CheckBox",
+            "text": "Vibrate",
+            "resource_name": "com.demo:id/vibrate_onoff",
+            "bbox_pixels": "BoundingBox(x_min=1, x_max=2, y_min=3, y_max=4)",
+            "is_clickable": True,
+            "is_checked": True,
+            "is_checkable": True,
+        },
+        index=0,
+    )
+    assert element.is_checked is True
+    assert element.is_checkable is True
+
+
 def test_parse_ui_element_and_signature():
     element = parse_ui_element(
         {
             "class_name": "android.widget.Button",
             "text": "OK",
             "resource_name": "com.demo:id/ok",
-            "bbox_pixels": "BoundingBox(x_min=10, x_max=110, y_min=20, y_max=120)",
+            "bbox_pixels": "BoundingBox(x_min=10, x_max=110, y_min=200, y_max=320)",
             "is_clickable": True,
             "is_visible": True,
         },

@@ -55,7 +55,26 @@ def test_normalize_signature_text_replaces_clock_values():
     assert normalize_signature_text("9:34 PM") == "<T> PM"
 
 
-def test_should_exclude_status_bar_clock():
+def test_signature_includes_checked_state():
+    from webwright.devices.a11y_forwarder_client import BoundingBox, ForwarderUIElement
+
+    unchecked = ForwarderUIElement(
+        index=0,
+        text="Vibrate",
+        resource_name="com.demo:id/vibrate_onoff",
+        bbox_pixels=BoundingBox(1, 2, 3, 200),
+        is_clickable=True,
+        is_checked=False,
+    )
+    checked = ForwarderUIElement(
+        index=0,
+        text="Vibrate",
+        resource_name="com.demo:id/vibrate_onoff",
+        bbox_pixels=BoundingBox(1, 2, 3, 200),
+        is_clickable=True,
+        is_checked=True,
+    )
+    assert ui_elements_signature([unchecked]) != ui_elements_signature([checked])
     assert should_exclude_from_signature(
         package_name="com.android.systemui",
         resource_name="com.android.systemui:id/clock",
