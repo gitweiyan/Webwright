@@ -32,3 +32,4 @@ agent:
   go_home_on_reset: true
   vision_image_max_bytes: 100000
   vision_image_max_long_edge: 1280
+  max_stuck_steps: 3

@@ -15,6 +15,8 @@ from webwright.android_agent import m3a as m3a_module
 from webwright.android_agent.base_agent import AgentInteractionResult
 from webwright import Environment, Model
 from webwright.environments.local_android_m3a import LocalAndroidM3aEnvironment
+from webwright.android_agent import transition_guard
+from webwright.utils.model_errors import ModelBillingError, raise_if_billing_error
 from webwright.utils.ui_signature import ui_elements_signature
 from webwright.utils.vision_images import compress_image_for_vision
 
@@ -51,7 +53,11 @@ class WebwrightMultimodalLlmWrapper(infer.MultimodalLlmWrapper):
                     "detail": "high",
                 }
             )
-        raw_text = self._model([{"role": "user", "content": content}])
+        try:
+            raw_text = self._model([{"role": "user", "content": content}])
+        except Exception as exc:  # noqa: BLE001 - surface billing failures explicitly
+            raise_if_billing_error(exc)
+            raise
         return raw_text, None, raw_text
 
 
@@ -62,6 +68,7 @@ class M3aAndroidAgentConfig(BaseModel):
     go_home_on_reset: bool = True
     vision_image_max_bytes: int = 100_000
     vision_image_max_long_edge: int | None = 1280
+    max_stuck_steps: int = 3
     output_path: Path | None = None
 
 
@@ -177,6 +184,7 @@ def _persist_step_artifacts(
         "before_signature": before_signature,
         "after_signature": after_signature,
         "ui_changed": step_data.get("ui_changed"),
+        "summary_skipped": step_data.get("summary_skipped", False),
         "screenshot_before": str(screenshot_before.relative_to(output_dir))
         if screenshot_before.exists()
         else None,
@@ -229,25 +237,54 @@ class M3aAndroidAgent:
         steps: list[dict[str, Any]] = []
         done = False
         final_response = ""
-        for step_index in range(1, self.config.step_limit + 1):
-            result: AgentInteractionResult = m3a.step(task)
-            step_data = result.data
-            if output_dir is not None:
-                steps.append(_persist_step_artifacts(step_index, step_data, output_dir))
-            else:
-                steps.append(
-                    {
-                        "step": step_index,
-                        "action": _action_to_dict(step_data.get("action_output_json")),
-                        "summary": step_data.get("summary"),
-                    }
-                )
-            done = result.done
-            action_json = step_data.get("action_output_json")
-            if action_json is not None and getattr(action_json, "action_type", None) == "answer":
-                final_response = getattr(action_json, "text", "") or final_response
-            if done:
-                break
+        exit_status = "step_limit"
+        stuck_steps = 0
+        summary_skipped_count = 0
+        try:
+            for step_index in range(1, self.config.step_limit + 1):
+                result: AgentInteractionResult = m3a.step(task)
+                step_data = result.data
+                if step_data.get("summary_skipped"):
+                    summary_skipped_count += 1
+                if output_dir is not None:
+                    steps.append(_persist_step_artifacts(step_index, step_data, output_dir))
+                else:
+                    steps.append(
+                        {
+                            "step": step_index,
+                            "action": _action_to_dict(step_data.get("action_output_json")),
+                            "summary": step_data.get("summary"),
+                            "ui_changed": step_data.get("ui_changed"),
+                            "summary_skipped": step_data.get("summary_skipped", False),
+                        }
+                    )
+                done = result.done
+                action_json = step_data.get("action_output_json")
+                if action_json is not None and getattr(action_json, "action_type", None) == "answer":
+                    final_response = getattr(action_json, "text", "") or final_response
+
+                if (
+                    step_data.get("ui_changed") is False
+                    and isinstance(action_json, json_action.JSONAction)
+                    and action_json.action_type in transition_guard.ACTIONS_EXPECTING_UI_CHANGE
+                ):
+                    stuck_steps += 1
+                elif step_data.get("ui_changed") is True:
+                    stuck_steps = 0
+
+                if (
+                    self.config.max_stuck_steps > 0
+                    and stuck_steps >= self.config.max_stuck_steps
+                ):
+                    exit_status = "stuck"
+                    break
+
+                if done:
+                    exit_status = "done"
+                    break
+        except ModelBillingError:
+            exit_status = "billing_error"
+            done = False
 
         payload = {
             "task": task,
@@ -255,7 +292,8 @@ class M3aAndroidAgent:
             "steps": steps,
             "final_response": final_response,
             "submission": final_response,
-            "exit_status": "done" if done else "step_limit",
+            "exit_status": exit_status,
+            "summary_skipped_count": summary_skipped_count,
         }
         if self.config.output_path is not None:
             self.config.output_path.parent.mkdir(parents=True, exist_ok=True)

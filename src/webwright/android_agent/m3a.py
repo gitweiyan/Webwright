@@ -532,6 +532,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
           'Can not execute the action, make sure to select the action with'
           ' the required parameters (if any) in the correct JSON format!'
       )
+      self.history.append(step_data)
       return base_agent.AgentInteractionResult(
           False,
           step_data,
@@ -571,6 +572,31 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
     m3a_utils.add_screenshot_label(after_screenshot, 'after')
     step_data['after_screenshot_with_som'] = after_screenshot.copy()
 
+    before_signature = step_data['before_signature']
+    after_signature = step_data['after_signature']
+    transition_facts = transition_guard.build_transition_facts(
+        converted_action,
+        before_signature=before_signature,
+        after_signature=after_signature,
+        history=self.history,
+    )
+
+    if transition_guard.should_skip_summary_llm(
+        converted_action, ui_changed=bool(step_data['ui_changed'])
+    ):
+      summary = transition_guard.build_programmatic_summary(
+          converted_action,
+          transition_facts=transition_facts,
+      )
+      step_data['summary_skipped'] = True
+      step_data['summary'] = f'Action selected: {action}. {summary}'
+      logging.info('Summary (programmatic): %s', summary)
+      self.history.append(step_data)
+      return base_agent.AgentInteractionResult(
+          False,
+          step_data,
+      )
+
     summary_prompt = _summarize_prompt(
         action,
         reason,
@@ -607,12 +633,6 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
       )
 
     step_data['summary_prompt'] = summary_prompt
-    transition_facts = transition_guard.build_transition_facts(
-        converted_action,
-        before_signature=before_signature,
-        after_signature=after_signature,
-        history=self.history,
-    )
     if transition_facts:
       summary = f"{transition_facts} {summary}"
     step_data['summary'] = f'Action selected: {action}. {summary}'

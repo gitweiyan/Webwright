@@ -14,6 +14,8 @@ _ACTIONS_EXPECTING_UI_CHANGE = frozenset(
     }
 )
 
+ACTIONS_EXPECTING_UI_CHANGE = _ACTIONS_EXPECTING_UI_CHANGE
+
 
 def action_key(action: json_action.JSONAction) -> str:
     if action.action_type in {"click", "long_press", "input_text", "scroll"}:
@@ -61,3 +63,20 @@ def build_transition_facts(
         )
 
     return " ".join(facts)
+
+
+def should_skip_summary_llm(action: json_action.JSONAction, *, ui_changed: bool) -> bool:
+    return action.action_type in _ACTIONS_EXPECTING_UI_CHANGE and not ui_changed
+
+
+def build_programmatic_summary(
+    action: json_action.JSONAction,
+    *,
+    transition_facts: str,
+) -> str:
+    if transition_facts:
+        return transition_facts
+    return (
+        f"No visible UI change after {action.action_type} ({action_key(action)}). "
+        "Re-check the target index and try a different approach."
+    )
