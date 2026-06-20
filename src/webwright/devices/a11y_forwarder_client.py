@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 import json
 import re
 from dataclasses import dataclass
@@ -8,6 +7,8 @@ from typing import Any
 from urllib.parse import urljoin
 
 import httpx
+
+from webwright.utils.ui_signature import ui_elements_signature
 
 _BBOX_RE = re.compile(
     r"BoundingBox\(x_min=([^,]+), x_max=([^,]+), y_min=([^,]+), y_max=([^)]+)\)"
@@ -101,32 +102,6 @@ class A11yForwarderClient:
         if not isinstance(payload, list):
             raise ValueError(f"Expected JSON array from /ui-elements, got {type(payload)!r}")
         return [parse_ui_element(row, index=i) for i, row in enumerate(payload)]
-
-
-def ui_elements_signature(elements: list[ForwarderUIElement]) -> str:
-    """Stable signature for screen-change detection."""
-    parts: list[str] = []
-    for element in elements:
-        bbox = element.bbox_pixels
-        bbox_text = (
-            f"{bbox.x_min},{bbox.y_min},{bbox.x_max},{bbox.y_max}" if bbox else ""
-        )
-        parts.append(
-            "|".join(
-                [
-                    element.package_name or "",
-                    element.resource_name or "",
-                    element.text or "",
-                    element.content_description or "",
-                    bbox_text,
-                    str(element.is_clickable),
-                ]
-            )
-        )
-    normalized = "\n".join(parts)
-    if not normalized:
-        return ""
-    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
 
 
 def pick_click_target(elements: list[ForwarderUIElement]) -> ForwarderUIElement | None:

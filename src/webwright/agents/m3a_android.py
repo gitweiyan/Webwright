@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import base64
-import hashlib
 import json
 from pathlib import Path
 from typing import Any
@@ -16,8 +15,7 @@ from webwright.android_agent import m3a as m3a_module
 from webwright.android_agent.base_agent import AgentInteractionResult
 from webwright import Environment, Model
 from webwright.environments.local_android_m3a import LocalAndroidM3aEnvironment
-
-
+from webwright.utils.ui_signature import ui_elements_signature
 from webwright.utils.vision_images import compress_image_for_vision
 
 
@@ -90,31 +88,6 @@ def _ui_element_to_dict(element: representation_utils.UIElement) -> dict[str, An
     return row
 
 
-def _ui_elements_signature(elements: list[representation_utils.UIElement]) -> str:
-    parts: list[str] = []
-    for element in elements:
-        bbox = element.bbox_pixels
-        bbox_text = (
-            f"{bbox.x_min},{bbox.y_min},{bbox.x_max},{bbox.y_max}" if bbox is not None else ""
-        )
-        parts.append(
-            "|".join(
-                [
-                    element.package_name or "",
-                    element.resource_name or "",
-                    element.text or "",
-                    element.content_description or "",
-                    bbox_text,
-                    str(element.is_clickable),
-                ]
-            )
-        )
-    normalized = "\n".join(parts)
-    if not normalized:
-        return ""
-    return hashlib.sha1(normalized.encode("utf-8")).hexdigest()[:16]
-
-
 def _save_screenshot(path: Path, pixels: np.ndarray) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
     Image.fromarray(pixels).save(path)
@@ -154,7 +127,7 @@ def _persist_step_artifacts(
     step_record_path = steps_dir / f"{step_name}.json"
 
     before_ui = step_data.get("before_ui_elements") or []
-    before_signature = _ui_elements_signature(before_ui)
+    before_signature = ui_elements_signature(before_ui)
 
     before_pixels = step_data.get("before_screenshot_with_som")
     if isinstance(before_pixels, np.ndarray):
