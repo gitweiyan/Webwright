@@ -33,3 +33,4 @@ agent:
   vision_image_max_bytes: 100000
   vision_image_max_long_edge: 1280
   max_stuck_steps: 3
+  max_history_steps: 12

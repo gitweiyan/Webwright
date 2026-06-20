@@ -118,6 +118,12 @@ def main() -> int:
         print("FAIL: no run directory found")
         return 1
     metrics = _analyze_run(run_dir)
+    metrics["scenario"] = args.scenario
+    metrics["device"] = args.device
+    log_path = REPO_ROOT / args.output_root / "results.jsonl"
+    log_path.parent.mkdir(parents=True, exist_ok=True)
+    with log_path.open("a", encoding="utf-8") as handle:
+        handle.write(json.dumps(metrics, ensure_ascii=False) + "\n")
     print(json.dumps(metrics, indent=2, ensure_ascii=False))
     if metrics["exit_status"] == "billing_error":
         return 2

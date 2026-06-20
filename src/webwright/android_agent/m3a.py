@@ -271,6 +271,13 @@ def _generate_ui_elements_description_list(
   return tree_info
 
 
+def _trim_history_summaries(history: list[str], max_history_steps: int) -> list[str]:
+  if max_history_steps <= 0 or len(history) <= max_history_steps:
+    return history
+  omitted = len(history) - max_history_steps
+  return [f'(Steps 1-{omitted} omitted from history)'] + history[-max_history_steps:]
+
+
 def _action_selection_prompt(
     goal: str,
     history: list[str],
@@ -344,6 +351,7 @@ class M3A(base_agent.EnvironmentInteractingAgent):
       llm: infer.MultimodalLlmWrapper,
       name: str = 'M3A',
       wait_after_action_seconds: float = 2.0,
+      max_history_steps: int = 12,
   ):
     """Initializes a M3A Agent.
 
@@ -359,6 +367,7 @@ class M3A(base_agent.EnvironmentInteractingAgent):
     self.history = []
     self.additional_guidelines = None
     self.wait_after_action_seconds = wait_after_action_seconds
+    self.max_history_steps = max(0, int(max_history_steps))
 
   def set_task_guidelines(self, task_guidelines: list[str]) -> None:
     self.additional_guidelines = task_guidelines
@@ -412,10 +421,13 @@ class M3A(base_agent.EnvironmentInteractingAgent):
 
     action_prompt = _action_selection_prompt(
         goal,
-        [
-            'Step ' + str(i + 1) + '- ' + step_info['summary']
-            for i, step_info in enumerate(self.history)
-        ],
+        _trim_history_summaries(
+            [
+                'Step ' + str(i + 1) + '- ' + step_info['summary']
+                for i, step_info in enumerate(self.history)
+            ],
+            self.max_history_steps,
+        ),
         before_ui_elements_list,
         self.additional_guidelines,
     )
