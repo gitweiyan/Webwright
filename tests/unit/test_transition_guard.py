@@ -55,6 +55,36 @@ def test_should_skip_summary_llm_for_unchanged_click():
     assert should_skip_summary_llm(action, ui_changed=True) is False
 
 
+def test_build_previous_step_feedback_after_unchanged_click():
+    history = [
+        {
+            "action_output_json": json_action.JSONAction(action_type="click", index=2),
+            "before_signature": "abc",
+            "after_signature": "abc",
+            "ui_changed": False,
+        }
+    ]
+    from webwright.android_agent.transition_guard import build_previous_step_feedback
+
+    feedback = build_previous_step_feedback(history)
+    assert feedback.startswith("Previous step result: FACT:")
+    assert "unchanged" in feedback
+
+
+def test_build_previous_step_feedback_empty_on_success():
+    history = [
+        {
+            "action_output_json": json_action.JSONAction(action_type="click", index=2),
+            "before_signature": "abc",
+            "after_signature": "def",
+            "ui_changed": True,
+        }
+    ]
+    from webwright.android_agent.transition_guard import build_previous_step_feedback
+
+    assert build_previous_step_feedback(history) == ""
+
+
 def test_build_programmatic_summary_includes_transition_facts():
     action = json_action.JSONAction(action_type="click", index=2)
     from webwright.android_agent.transition_guard import build_programmatic_summary

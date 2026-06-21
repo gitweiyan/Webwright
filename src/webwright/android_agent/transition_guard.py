@@ -80,3 +80,22 @@ def build_programmatic_summary(
         f"No visible UI change after {action.action_type} ({action_key(action)}). "
         "Re-check the target index and try a different approach."
     )
+
+
+def build_previous_step_feedback(history: list[dict]) -> str:
+    """Facts from the latest executed step for the next action prompt."""
+    if not history:
+        return ""
+    last_step = history[-1]
+    action = last_step.get("action_output_json")
+    if not isinstance(action, json_action.JSONAction):
+        return ""
+    facts = build_transition_facts(
+        action,
+        before_signature=str(last_step.get("before_signature") or ""),
+        after_signature=str(last_step.get("after_signature") or ""),
+        history=history[:-1],
+    )
+    if not facts:
+        return ""
+    return f"Previous step result: {facts}\n\n"

@@ -466,7 +466,7 @@ class M3A(base_agent.EnvironmentInteractingAgent):
         before_ui_elements_list,
         self.additional_guidelines,
         action_image_mode=self.action_image_mode,
-        step_feedback='',
+        step_feedback=transition_guard.build_previous_step_feedback(self.history),
     )
     step_data['action_prompt'] = action_prompt
     action_images = _action_selection_images(
