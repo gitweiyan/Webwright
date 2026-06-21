@@ -70,6 +70,7 @@ class M3aAndroidAgentConfig(BaseModel):
     vision_image_max_long_edge: int | None = 1280
     max_stuck_steps: int = 3
     max_history_steps: int = 12
+    action_image_mode: str = "som_only"
     output_path: Path | None = None
 
 
@@ -227,6 +228,7 @@ class M3aAndroidAgent:
                 ),
                 wait_after_action_seconds=self.config.wait_after_action_seconds,
                 max_history_steps=self.config.max_history_steps,
+                action_image_mode=self.config.action_image_mode,
             )
             if self.config.transition_pause is not None:
                 self._m3a.transition_pause = self.config.transition_pause

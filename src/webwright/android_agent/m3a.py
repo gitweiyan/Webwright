@@ -150,12 +150,20 @@ GUIDANCE = (
 )
 
 
+ACTION_SELECTION_IMAGE_DESC_SOM_ONLY = (
+    'The current screenshot with bounding boxes and numeric labels is given to you.\n'
+)
+ACTION_SELECTION_IMAGE_DESC_RAW_AND_SOM = (
+    'The current screenshot and the same screenshot with bounding boxes'
+    ' and labels added are also given to you.\n'
+)
+
 ACTION_SELECTION_PROMPT_TEMPLATE = (
     PROMPT_PREFIX
     + '\nThe current user goal/request is: {goal}\n\n'
+    '{step_feedback}'
     'Here is a history of what you have done so far:\n{history}\n\n'
-    'The current screenshot and the same screenshot with bounding boxes'
-    ' and labels added are also given to you.\n'
+    '{screenshot_description}'
     'Here is a list of detailed'
     ' information for some of the UI elements (notice that some elements in'
     ' this list may not be visible in the current screen and so you can not'
@@ -278,11 +286,24 @@ def _trim_history_summaries(history: list[str], max_history_steps: int) -> list[
   return [f'(Steps 1-{omitted} omitted from history)'] + history[-max_history_steps:]
 
 
+def _action_selection_images(
+    action_image_mode: str,
+    raw_screenshot,
+    som_screenshot,
+) -> list:
+  if action_image_mode == 'raw_and_som':
+    return [raw_screenshot, som_screenshot]
+  return [som_screenshot]
+
+
 def _action_selection_prompt(
     goal: str,
     history: list[str],
     ui_elements: str,
     additional_guidelines: list[str] | None = None,
+    *,
+    action_image_mode: str = 'som_only',
+    step_feedback: str = '',
 ) -> str:
   """Generate the prompt for the action selection.
 
@@ -306,9 +327,16 @@ def _action_selection_prompt(
     for guideline in additional_guidelines:
       extra_guidelines += f'- {guideline}\n'
 
+  if action_image_mode == 'raw_and_som':
+    screenshot_description = ACTION_SELECTION_IMAGE_DESC_RAW_AND_SOM
+  else:
+    screenshot_description = ACTION_SELECTION_IMAGE_DESC_SOM_ONLY
+
   return ACTION_SELECTION_PROMPT_TEMPLATE.format(
       goal=goal,
+      step_feedback=step_feedback,
       history=history,
+      screenshot_description=screenshot_description,
       ui_elements=ui_elements if ui_elements else 'Not available',
       additional_guidelines=extra_guidelines,
   )
@@ -352,6 +380,7 @@ class M3A(base_agent.EnvironmentInteractingAgent):
       name: str = 'M3A',
       wait_after_action_seconds: float = 2.0,
       max_history_steps: int = 12,
+      action_image_mode: str = 'som_only',
   ):
     """Initializes a M3A Agent.
 
@@ -368,6 +397,12 @@ class M3A(base_agent.EnvironmentInteractingAgent):
     self.additional_guidelines = None
     self.wait_after_action_seconds = wait_after_action_seconds
     self.max_history_steps = max(0, int(max_history_steps))
+    if action_image_mode not in {'som_only', 'raw_and_som'}:
+      raise ValueError(
+          f'Unsupported action_image_mode: {action_image_mode!r}. '
+          "Use 'som_only' or 'raw_and_som'."
+      )
+    self.action_image_mode = action_image_mode
 
   def set_task_guidelines(self, task_guidelines: list[str]) -> None:
     self.additional_guidelines = task_guidelines
@@ -430,14 +465,19 @@ class M3A(base_agent.EnvironmentInteractingAgent):
         ),
         before_ui_elements_list,
         self.additional_guidelines,
+        action_image_mode=self.action_image_mode,
+        step_feedback='',
     )
     step_data['action_prompt'] = action_prompt
+    action_images = _action_selection_images(
+        self.action_image_mode,
+        step_data['raw_screenshot'],
+        before_screenshot,
+    )
+    step_data['action_image_count'] = len(action_images)
     action_output, is_safe, raw_response = self.llm.predict_mm(
         action_prompt,
-        [
-            step_data['raw_screenshot'],
-            before_screenshot,
-        ],
+        action_images,
     )
 
     if is_safe == False:  # pylint: disable=singleton-comparison

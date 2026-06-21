@@ -34,3 +34,4 @@ agent:
   vision_image_max_long_edge: 1280
   max_stuck_steps: 3
   max_history_steps: 12
+  action_image_mode: som_only
