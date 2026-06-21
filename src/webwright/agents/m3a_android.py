@@ -246,6 +246,7 @@ class M3aAndroidAgent:
         exit_status = "step_limit"
         stuck_steps = 0
         summary_skipped_count = 0
+        previous_action: json_action.JSONAction | None = None
         try:
             for step_index in range(1, self.config.step_limit + 1):
                 result: AgentInteractionResult = m3a.step(task)
@@ -269,14 +270,16 @@ class M3aAndroidAgent:
                 if action_json is not None and getattr(action_json, "action_type", None) == "answer":
                     final_response = getattr(action_json, "text", "") or final_response
 
-                if (
-                    step_data.get("ui_changed") is False
-                    and isinstance(action_json, json_action.JSONAction)
-                    and action_json.action_type in transition_guard.ACTIONS_EXPECTING_UI_CHANGE
-                ):
-                    stuck_steps += 1
-                elif step_data.get("ui_changed") is True:
-                    stuck_steps = 0
+                if isinstance(action_json, json_action.JSONAction):
+                    if step_data.get("ui_changed") is True:
+                        stuck_steps = 0
+                    elif transition_guard.should_count_stuck_step(
+                        action_json,
+                        ui_changed=bool(step_data.get("ui_changed")),
+                        previous_action=previous_action,
+                    ):
+                        stuck_steps += 1
+                    previous_action = action_json
 
                 if (
                     self.config.max_stuck_steps > 0

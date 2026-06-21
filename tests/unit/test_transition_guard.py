@@ -1,6 +1,14 @@
+from types import SimpleNamespace
+
 from android_world.env import json_action
 
-from webwright.android_agent.transition_guard import action_key, build_transition_facts
+from webwright.android_agent.transition_guard import (
+    action_key,
+    build_previous_step_feedback,
+    build_transition_facts,
+    detect_ambiguous_toggle_facts,
+    should_count_stuck_step,
+)
 
 
 def test_action_key_for_click():
@@ -94,3 +102,121 @@ def test_build_programmatic_summary_includes_transition_facts():
         transition_facts="FACT: UI signature unchanged after click (click:2).",
     )
     assert "FACT: UI signature unchanged" in text
+
+
+def test_should_count_stuck_step_only_for_same_action_key():
+    click_six = json_action.JSONAction(action_type="click", index=6)
+    click_seven = json_action.JSONAction(action_type="click", index=7)
+
+    assert should_count_stuck_step(
+        click_six,
+        ui_changed=False,
+        previous_action=click_six,
+    )
+    assert not should_count_stuck_step(
+        click_six,
+        ui_changed=False,
+        previous_action=click_seven,
+    )
+    assert not should_count_stuck_step(
+        click_six,
+        ui_changed=True,
+        previous_action=click_six,
+    )
+
+
+def test_detect_ambiguous_toggle_facts_for_am_pm_band():
+    elements = [
+        SimpleNamespace(
+            text="AM",
+            content_description=None,
+            class_name="android.widget.CompoundButton",
+            package_name="com.google.android.deskclock",
+            is_checkable=True,
+            is_checked=True,
+            bbox_pixels=SimpleNamespace(x_min=771, x_max=908),
+        ),
+        SimpleNamespace(
+            text="PM",
+            content_description=None,
+            class_name="android.widget.CompoundButton",
+            package_name="com.google.android.deskclock",
+            is_checkable=True,
+            is_checked=True,
+            bbox_pixels=SimpleNamespace(x_min=771, x_max=908),
+        ),
+    ]
+    facts = detect_ambiguous_toggle_facts(elements)
+    assert "Ambiguous toggle group" in facts
+    assert "AM" in facts
+    assert "PM" in facts
+
+
+def test_detect_ambiguous_toggle_facts_ignores_multi_select_days():
+    elements = [
+        SimpleNamespace(
+            text="Sat",
+            content_description=None,
+            class_name="android.widget.CompoundButton",
+            package_name="com.google.android.deskclock",
+            is_checkable=True,
+            is_checked=True,
+            bbox_pixels=SimpleNamespace(x_min=100, x_max=200),
+        ),
+        SimpleNamespace(
+            text="Sun",
+            content_description=None,
+            class_name="android.widget.CompoundButton",
+            package_name="com.google.android.deskclock",
+            is_checkable=True,
+            is_checked=True,
+            bbox_pixels=SimpleNamespace(x_min=300, x_max=400),
+        ),
+    ]
+    assert detect_ambiguous_toggle_facts(elements) == ""
+
+
+def test_build_transition_facts_includes_ambiguous_toggle():
+    action = json_action.JSONAction(action_type="click", index=6)
+    elements = [
+        SimpleNamespace(
+            text="AM",
+            content_description=None,
+            class_name="android.widget.CompoundButton",
+            package_name="com.google.android.deskclock",
+            is_checkable=True,
+            is_checked=True,
+            bbox_pixels=SimpleNamespace(x_min=771, x_max=908),
+        ),
+        SimpleNamespace(
+            text="PM",
+            content_description=None,
+            class_name="android.widget.CompoundButton",
+            package_name="com.google.android.deskclock",
+            is_checkable=True,
+            is_checked=True,
+            bbox_pixels=SimpleNamespace(x_min=771, x_max=908),
+        ),
+    ]
+    facts = build_transition_facts(
+        action,
+        before_signature="abc",
+        after_signature="def",
+        history=[],
+        after_ui_elements=elements,
+    )
+    assert "Ambiguous toggle group" in facts
+
+
+def test_build_previous_step_feedback_uses_stored_transition_facts():
+    history = [
+        {
+            "action_output_json": json_action.JSONAction(action_type="click", index=6),
+            "before_signature": "abc",
+            "after_signature": "def",
+            "ui_changed": True,
+            "transition_facts": "FACT: Ambiguous toggle group — multiple options appear checked.",
+        }
+    ]
+    feedback = build_previous_step_feedback(history)
+    assert "Ambiguous toggle group" in feedback

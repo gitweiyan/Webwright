@@ -646,7 +646,9 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
         before_signature=before_signature,
         after_signature=after_signature,
         history=self.history,
+        after_ui_elements=after_ui_elements,
     )
+    step_data['transition_facts'] = transition_facts
 
     if transition_guard.should_skip_summary_llm(
         converted_action, ui_changed=bool(step_data['ui_changed'])
