@@ -25,6 +25,81 @@ def action_key(action: json_action.JSONAction) -> str:
     return action.action_type or "unknown"
 
 
+def element_target_key(element: object) -> str:
+    parts = [
+        getattr(element, "resource_name", None) or "",
+        getattr(element, "content_description", None) or "",
+        getattr(element, "text", None) or "",
+        getattr(element, "class_name", None) or "",
+    ]
+    return "|".join(str(part).strip() for part in parts if str(part).strip())
+
+
+def element_target_label(element: object) -> str:
+    for field in ("content_description", "text", "resource_name", "class_name"):
+        value = getattr(element, field, None)
+        if not value:
+            continue
+        label = str(value)
+        if field == "resource_name":
+            label = label.rsplit("/", 1)[-1]
+        return label[:80]
+    return "unknown"
+
+
+def format_action_selected_prefix(action: str, target_label: str | None = None) -> str:
+    if target_label:
+        return f"Action selected: {action} (target: {target_label})."
+    return f"Action selected: {action}."
+
+
+def build_index_drift_warning(
+    history: list[dict],
+    current_ui_elements: list[object],
+) -> str:
+    if not history or not current_ui_elements:
+        return ""
+    last_step = history[-1]
+    action = last_step.get("action_output_json")
+    prev_key = str(last_step.get("action_target_key") or "")
+    if not isinstance(action, json_action.JSONAction):
+        return ""
+    if action.action_type not in {"click", "long_press", "input_text"}:
+        return ""
+    index = action.index
+    if index is None or index < 0 or index >= len(current_ui_elements):
+        return ""
+    current_key = element_target_key(current_ui_elements[index])
+    if not prev_key or prev_key == current_key:
+        return ""
+    prev_label = str(last_step.get("action_target_label") or prev_key)
+    current_label = element_target_label(current_ui_elements[index])
+    return (
+        "FACT: Index "
+        f"{index} no longer refers to the same control. "
+        f'It was "{prev_label}" last step but is now "{current_label}". '
+        "Re-check the current UI list before reusing this index."
+    )
+
+
+def build_action_prompt_feedback(
+    history: list[dict],
+    *,
+    current_ui_elements: list[object] | None = None,
+) -> str:
+    parts: list[str] = []
+    if current_ui_elements:
+        drift = build_index_drift_warning(history, current_ui_elements)
+        if drift:
+            parts.append(drift)
+    previous = build_previous_step_feedback(history)
+    if previous:
+        parts.append(previous.rstrip())
+    if not parts:
+        return ""
+    return "\n\n".join(parts) + "\n\n"
+
+
 _EXCLUSIVE_TOGGLE_CLASSES = frozenset(
     {
         "android.widget.RadioButton",

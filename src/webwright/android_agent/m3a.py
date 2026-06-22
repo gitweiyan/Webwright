@@ -112,6 +112,9 @@ GUIDANCE = (
     ' pick must be VISIBLE in the screenshot and also in the UI element'
     ' list given to you (some elements in the list may NOT be visible on'
     ' the screen so you can not interact with them).\n'
+    '- Do not reuse an index from a previous step without checking the'
+    ' current UI list: after the screen changes, the same index can refer to'
+    ' a different control.\n'
     '- Consider exploring the screen by using the `scroll`'
     ' action with different directions to reveal additional content.\n'
     '- The direction parameter for the `scroll` action can be confusing'
@@ -167,9 +170,10 @@ ACTION_SELECTION_PROMPT_TEMPLATE = (
     'Here is a list of detailed'
     ' information for some of the UI elements (notice that some elements in'
     ' this list may not be visible in the current screen and so you can not'
-    ' interact with it, can try to scroll the screen to reveal it first),'
-    ' the numeric indexes are'
-    ' consistent with the ones in the labeled screenshot:\n{ui_elements}\n'
+    ' interact with it, can try to scroll the screen to reveal it first).'
+    ' Numeric indexes match this step\'s screenshot only; after UI changes,'
+    ' the same index may refer to a different control. Confirm the target by'
+    ' content_description, text, or resource_name in the list below:\n{ui_elements}\n'
     + GUIDANCE
     + '{additional_guidelines}'
     + '\nNow output an action from the above list in the correct JSON format,'
@@ -466,7 +470,10 @@ class M3A(base_agent.EnvironmentInteractingAgent):
         before_ui_elements_list,
         self.additional_guidelines,
         action_image_mode=self.action_image_mode,
-        step_feedback=transition_guard.build_previous_step_feedback(self.history),
+        step_feedback=transition_guard.build_action_prompt_feedback(
+            self.history,
+            current_ui_elements=before_ui_elements,
+        ),
     )
     step_data['action_prompt'] = action_prompt
     action_images = _action_selection_images(
@@ -552,6 +559,13 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
         self.history.append(step_data)
         return base_agent.AgentInteractionResult(False, step_data)
 
+      step_data['action_target_key'] = transition_guard.element_target_key(
+          before_ui_elements[action_index]
+      )
+      step_data['action_target_label'] = transition_guard.element_target_label(
+          before_ui_elements[action_index]
+      )
+
       # Add mark to the target element.
       m3a_utils.add_ui_element_mark(
           step_data['raw_screenshot'],
@@ -607,7 +621,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
 
     time.sleep(self.wait_after_action_seconds)
 
-    state = self.env.get_state(wait_to_stabilize=False)
+    state = self.env.get_state(wait_to_stabilize=True)
     logical_screen_size = self.env.logical_screen_size
     orientation = self.env.orientation
     physical_frame_boundary = self.env.physical_frame_boundary
@@ -649,6 +663,10 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
         after_ui_elements=after_ui_elements,
     )
     step_data['transition_facts'] = transition_facts
+    action_prefix = transition_guard.format_action_selected_prefix(
+        action,
+        step_data.get('action_target_label'),
+    )
 
     if transition_guard.should_skip_summary_llm(
         converted_action, ui_changed=bool(step_data['ui_changed'])
@@ -658,7 +676,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
           transition_facts=transition_facts,
       )
       step_data['summary_skipped'] = True
-      step_data['summary'] = f'Action selected: {action}. {summary}'
+      step_data['summary'] = f'{action_prefix} {summary}'
       logging.info('Summary (programmatic): %s', summary)
       self.history.append(step_data)
       return base_agent.AgentInteractionResult(
@@ -704,7 +722,7 @@ Action: {{"action_type": "status", "goal_status": "infeasible"}}"""
     step_data['summary_prompt'] = summary_prompt
     if transition_facts:
       summary = f"{transition_facts} {summary}"
-    step_data['summary'] = f'Action selected: {action}. {summary}'
+    step_data['summary'] = f'{action_prefix} {summary}'
     logging.info('Summary: %s', summary)
     step_data['summary_raw_response'] = raw_response
 
