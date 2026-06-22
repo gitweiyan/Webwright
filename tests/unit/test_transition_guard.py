@@ -4,9 +4,14 @@ from android_world.env import json_action
 
 from webwright.android_agent.transition_guard import (
     action_key,
+    build_action_prompt_feedback,
+    build_index_drift_warning,
     build_previous_step_feedback,
     build_transition_facts,
     detect_ambiguous_toggle_facts,
+    element_target_key,
+    element_target_label,
+    format_action_selected_prefix,
     should_count_stuck_step,
 )
 
@@ -220,3 +225,79 @@ def test_build_previous_step_feedback_uses_stored_transition_facts():
     ]
     feedback = build_previous_step_feedback(history)
     assert "Ambiguous toggle group" in feedback
+
+
+def test_element_target_key_and_label():
+    element = SimpleNamespace(
+        text="",
+        content_description="Make larger",
+        resource_name="com.android.settings:id/icon_end_frame",
+        class_name="android.widget.FrameLayout",
+    )
+    assert "Make larger" in element_target_key(element)
+    assert element_target_label(element) == "Make larger"
+
+
+def test_build_index_drift_warning_when_index_remaps():
+    make_larger = SimpleNamespace(
+        text="",
+        content_description="Make larger",
+        resource_name="com.android.settings:id/icon_end_frame",
+        class_name="android.widget.FrameLayout",
+    )
+    notification = SimpleNamespace(
+        text="",
+        content_description="Digital Wellbeing notification: Need time to focus?",
+        resource_name="",
+        class_name="android.widget.ImageView",
+    )
+    history = [
+        {
+            "action_output_json": json_action.JSONAction(action_type="click", index=15),
+            "action_target_key": element_target_key(make_larger),
+            "action_target_label": "Make larger",
+        }
+    ]
+    warning = build_index_drift_warning(history, [make_larger] * 15 + [notification])
+    assert "Index 15 no longer refers" in warning
+    assert "Make larger" in warning
+    assert "Digital Wellbeing" in warning
+
+
+def test_build_action_prompt_feedback_includes_drift_and_previous_facts():
+    make_larger = SimpleNamespace(
+        text="",
+        content_description="Make larger",
+        resource_name="com.android.settings:id/icon_end_frame",
+        class_name="android.widget.FrameLayout",
+    )
+    notification = SimpleNamespace(
+        text="",
+        content_description="Digital Wellbeing notification: Need time to focus?",
+        resource_name="",
+        class_name="android.widget.ImageView",
+    )
+    history = [
+        {
+            "action_output_json": json_action.JSONAction(action_type="click", index=15),
+            "action_target_key": element_target_key(make_larger),
+            "action_target_label": "Make larger",
+            "before_signature": "abc",
+            "after_signature": "abc",
+            "ui_changed": False,
+        }
+    ]
+    feedback = build_action_prompt_feedback(
+        history,
+        current_ui_elements=[make_larger] * 15 + [notification],
+    )
+    assert "Index 15 no longer refers" in feedback
+    assert "Previous step result: FACT:" in feedback
+
+
+def test_format_action_selected_prefix_includes_target_label():
+    prefix = format_action_selected_prefix(
+        '{"action_type": "click", "index": 15}',
+        "Make larger",
+    )
+    assert "target: Make larger" in prefix

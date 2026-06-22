@@ -38,7 +38,15 @@ PROMPT_PREFIX = (
     ' At each step, you will be given the current screenshot (including the'
     ' original screenshot and the same screenshot with bounding'
     ' boxes and numeric indexes added to some UI elements) and a history of'
-    ' what you have done (in text). Based on these pieces of information and'
+    ' what you have done (in text).\n'
+    'CRITICAL: The bounding boxes and numeric indexes are an overlay drawn by'
+    ' the system ONLY so you can reference elements for actions. They are NOT'
+    ' part of the screen content. Never read a box index as on-screen text, a'
+    ' value, a count, a date, a price, or a progress/state indicator. To judge'
+    ' the actual screen content and task progress, rely on the unannotated'
+    " content (the original screenshot and each element's text /"
+    ' content_description in the UI element list), not on the index labels.\n'
+    'Based on these pieces of information and'
     ' the goal, you must choose to perform one of the'
     ' action in the following list (action description followed by the JSON'
     ' format) by outputing the action in the correct JSON format.\n'
@@ -100,6 +108,13 @@ GUIDANCE = (
     ' the goal is something like "show me ...").\n'
     '- If the desired state is already achieved (e.g., enabling Wi-Fi when'
     " it's already on), you can just complete the task.\n"
+    'Evidence and completion:\n'
+    '- Verification Before Completion: Do not mark a task complete unless the'
+    ' current UI provides direct evidence that the goal has been achieved.\n'
+    '- Evidence Quality: Prefer direct evidence over indirect evidence or'
+    ' assumptions.\n'
+    '- Conflicting Evidence: When observations conflict, gather additional'
+    ' evidence before acting or finishing.\n'
     'Action Related:\n'
     '- Use the `open_app` action whenever you want to open an app'
     ' (nothing will happen if the app is not installed), do not use the'
@@ -117,11 +132,9 @@ GUIDANCE = (
     ' a different control.\n'
     '- Consider exploring the screen by using the `scroll`'
     ' action with different directions to reveal additional content.\n'
-    '- The direction parameter for the `scroll` action can be confusing'
-    " sometimes as it's opposite to swipe, for example, to view content at the"
-    ' bottom, the `scroll` direction should be set to "down". It has been'
-    ' observed that you have difficulties in choosing the correct direction, so'
-    ' if one does not work, try the opposite as well.\n'
+    ' The `scroll` direction = the direction your finger content moves to, NOT swipe.'
+    ' To reveal content below, use "down"; to reveal content above, use "up".'
+    ' Prefer scrolling a specific scrollable element (pass its index) over the whole screen.\n'
     'Text Related Operations:\n'
     '- Normally to select certain text on the screen: <i> Enter text selection'
     ' mode by long pressing the area where the text is, then some of the words'
@@ -154,11 +167,19 @@ GUIDANCE = (
 
 
 ACTION_SELECTION_IMAGE_DESC_SOM_ONLY = (
-    'The current screenshot with bounding boxes and numeric labels is given to you.\n'
+    'The current screenshot is given to you with bounding boxes and numeric'
+    ' index labels overlaid on some UI elements. Use these labels ONLY to pick'
+    ' the index for an action; the label numbers are not real screen content,'
+    ' so when you need to read the actual text/value/state on the screen, use'
+    ' the UI element list below instead of the numbers drawn on the boxes.\n'
 )
 ACTION_SELECTION_IMAGE_DESC_RAW_AND_SOM = (
-    'The current screenshot and the same screenshot with bounding boxes'
-    ' and labels added are also given to you.\n'
+    'You are given TWO images: (1) the ORIGINAL screenshot with no overlays,'
+    ' and (2) the SAME screenshot annotated with bounding boxes and numeric'
+    ' index labels. Read all actual screen content (text, values, states,'
+    ' progress) from image (1); use image (2) ONLY to choose the numeric index'
+    ' for click / long_press / input_text / scroll. Do not treat the index'
+    ' labels in image (2) as part of the screen content.\n'
 )
 
 ACTION_SELECTION_PROMPT_TEMPLATE = (
@@ -176,9 +197,26 @@ ACTION_SELECTION_PROMPT_TEMPLATE = (
     ' content_description, text, or resource_name in the list below:\n{ui_elements}\n'
     + GUIDANCE
     + '{additional_guidelines}'
-    + '\nNow output an action from the above list in the correct JSON format,'
-    ' following the reason why you do that. Your answer should look like:\n'
-    'Reason: ...\nAction: {{"action_type":...}}\n\n'
+    + '\nNow output an action from the above list in the correct JSON format.'
+    ' First reason step by step by filling in EVERY field below (keep each'
+    ' field to a single line), then output the action. Your answer must look'
+    ' like:\n'
+    'Reason:\n'
+    '- Screen: <the key UI elements on the current screen that are relevant to'
+    ' the goal>\n'
+    '- Progress: <what has already been accomplished toward the goal, inferred'
+    ' from the history; "nothing yet" if you just started>\n'
+    '- Verify_last: <did the previous action achieve its intent? If the UI did'
+    ' not change or the result is unexpected, say why and switch strategy'
+    ' instead of repeating the same action>\n'
+    '- Plan: <the next sub-goal and the single action that advances it>\n'
+    'Action: {{"action_type":...}}\n\n'
+    'Completion rule: before choosing'
+    ' `{{"action_type": "status", "goal_status": "complete"}}`, you MUST state'
+    ' in "Verify_last" exactly which goal condition is now satisfied and the'
+    ' concrete on-screen evidence (a visible element/text) that proves it. If'
+    ' you cannot cite such evidence, do NOT complete; take an action to verify'
+    ' or make progress instead.\n\n'
     'Your Answer:\n'
 )
 
