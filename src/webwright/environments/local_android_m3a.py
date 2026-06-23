@@ -8,7 +8,7 @@ from typing import Any
 import numpy as np
 from pydantic import BaseModel
 
-from android_world.env import interface, json_action
+from webwright.android import env_protocol, json_action
 
 from webwright.devices.a11y_forwarder_client import (
     A11yForwarderClient,
@@ -40,7 +40,7 @@ class LocalAndroidM3aAsyncEnvConfig(BaseModel):
     stabilize_threshold: int = 3
 
 
-class LocalAndroidM3aAsyncEnv(interface.AsyncEnv):
+class LocalAndroidM3aAsyncEnv(env_protocol.AsyncEnv):
     """AndroidWorld ``AsyncEnv`` backed by forwarder UI tree + u2 actuation."""
 
     def __init__(self, config: LocalAndroidM3aAsyncEnvConfig | None = None, **kwargs):
@@ -67,7 +67,7 @@ class LocalAndroidM3aAsyncEnv(interface.AsyncEnv):
         self._driver.connect()
         self._refresh_screen_size()
 
-    def reset(self, go_home: bool = False) -> interface.State:
+    def reset(self, go_home: bool = False) -> env_protocol.State:
         if go_home:
             self._driver.press("home")
             time.sleep(0.5)
@@ -75,7 +75,7 @@ class LocalAndroidM3aAsyncEnv(interface.AsyncEnv):
         self._prior_signature = ""
         return self.get_state(wait_to_stabilize=False)
 
-    def get_state(self, wait_to_stabilize: bool = False) -> interface.State:
+    def get_state(self, wait_to_stabilize: bool = False) -> env_protocol.State:
         if wait_to_stabilize:
             return self._get_stable_state()
         return self._build_state()
@@ -133,11 +133,11 @@ class LocalAndroidM3aAsyncEnv(interface.AsyncEnv):
     def _refresh_screen_size(self) -> None:
         self._controller_stub = _U2ControllerStub(self._driver.window_size())
 
-    def _build_state(self) -> interface.State:
+    def _build_state(self) -> env_protocol.State:
         forwarder_elements = self._forwarder.fetch_ui_elements()
         ui_elements = to_representation_ui_elements(forwarder_elements)
         pixels = self._screenshot_pixels()
-        return interface.State(
+        return env_protocol.State(
             pixels=pixels,
             forest=forwarder_elements,
             ui_elements=ui_elements,
@@ -147,7 +147,7 @@ class LocalAndroidM3aAsyncEnv(interface.AsyncEnv):
     def _screenshot_pixels(self) -> np.ndarray:
         return self._driver.screenshot_pixels()
 
-    def _get_stable_state(self) -> interface.State:
+    def _get_stable_state(self) -> env_protocol.State:
         threshold = max(1, self.config.stabilize_threshold)
         sleep_duration = max(0.0, self.config.stabilize_sleep_seconds)
         deadline = time.time() + max(0.0, self.config.stabilize_timeout_seconds)

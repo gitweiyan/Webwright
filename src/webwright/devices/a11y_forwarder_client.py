@@ -156,21 +156,21 @@ def elements_to_json(elements: list[ForwarderUIElement]) -> str:
 def to_representation_ui_elements(
     elements: list[ForwarderUIElement],
 ):
-    """Convert forwarder elements to AndroidWorld ``UIElement`` objects."""
-    from android_world.env import representation_utils
+    """Convert forwarder elements to ``UIElement`` objects."""
+    from webwright.android import ui_element as ui_element_module
 
     out = []
     for element in elements:
         bbox = None
         if element.bbox_pixels is not None:
-            bbox = representation_utils.BoundingBox(
+            bbox = ui_element_module.BoundingBox(
                 element.bbox_pixels.x_min,
                 element.bbox_pixels.x_max,
                 element.bbox_pixels.y_min,
                 element.bbox_pixels.y_max,
             )
         out.append(
-            representation_utils.UIElement(
+            ui_element_module.UIElement(
                 text=element.text,
                 content_description=element.content_description,
                 class_name=element.class_name,

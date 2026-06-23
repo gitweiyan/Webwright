@@ -5,8 +5,7 @@ import logging
 import time
 from typing import Any
 
-from android_world.env import json_action
-from android_world.env.adb_utils import get_adb_activity
+from webwright.android import app_registry, json_action
 
 from webwright.devices.android_adb import AndroidAdbDriver
 
@@ -141,7 +140,7 @@ def execute_u2_action(
 
 
 def _launch_app(app_name: str, driver: AndroidAdbDriver) -> None:
-    activity = get_adb_activity(app_name)
+    activity = app_registry.get_adb_activity(app_name)
     if activity is None:
         driver.launch_app(app_name)
         return

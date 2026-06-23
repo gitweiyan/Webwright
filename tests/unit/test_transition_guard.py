@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from android_world.env import json_action
+from webwright.android import json_action
 
 from webwright.android_agent.transition_guard import (
     action_key,

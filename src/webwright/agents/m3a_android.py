@@ -9,8 +9,7 @@ import numpy as np
 from PIL import Image
 from pydantic import BaseModel
 
-from android_world.agents import infer
-from android_world.env import json_action, representation_utils
+from webwright.android import json_action, ui_element
 from webwright.android_agent import m3a as m3a_module
 from webwright.android_agent.base_agent import AgentInteractionResult
 from webwright import Environment, Model
@@ -21,8 +20,8 @@ from webwright.utils.ui_signature import ui_elements_signature
 from webwright.utils.vision_images import compress_image_for_vision
 
 
-class WebwrightMultimodalLlmWrapper(infer.MultimodalLlmWrapper):
-    """Bridge Webwright vision models to AndroidWorld M3A ``predict_mm``."""
+class WebwrightMultimodalLlmWrapper:
+    """Bridge Webwright vision models to M3A ``predict_mm``."""
 
     def __init__(
         self,
@@ -80,12 +79,12 @@ def _run_output_dir(output_path: Path | None) -> Path | None:
     return output_path.parent
 
 
-def _ui_element_to_dict(element: representation_utils.UIElement) -> dict[str, Any]:
+def _ui_element_to_dict(element: ui_element.UIElement) -> dict[str, Any]:
     row: dict[str, Any] = {}
     for key, value in element.__dict__.items():
         if value is None:
             continue
-        if isinstance(value, representation_utils.BoundingBox):
+        if isinstance(value, ui_element.BoundingBox):
             row[key] = {
                 "x_min": int(value.x_min),
                 "x_max": int(value.x_max),

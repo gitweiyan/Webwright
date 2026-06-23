@@ -25,10 +25,10 @@ android = [
 ]
 m3a = [
     "numpy>=1.26",
+    "opencv-python-headless>=4.8",
     "immutabledict>=2.0",
     "fuzzywuzzy>=0.18",
     "python-Levenshtein>=0.21",
-    "dm_env>=1.6",
     "absl-py>=2.1",
 ]
 

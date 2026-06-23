@@ -12,7 +12,6 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[1]
 SRC_ROOT = REPO_ROOT / "src"
-ANDROID_WORLD_ROOT = REPO_ROOT.parent
 
 from webwright.utils.device_reset import clear_app_data, go_home  # noqa: E402
 
@@ -96,7 +95,7 @@ def _run_scenario(
 ) -> int:
     scenario["setup"](device)
     env = os.environ.copy()
-    env["PYTHONPATH"] = f"{SRC_ROOT}:{ANDROID_WORLD_ROOT}"
+    env["PYTHONPATH"] = str(SRC_ROOT)
     cmd = [
         sys.executable,
         "-m",

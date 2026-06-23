@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from android_world.env import json_action
+from webwright.android import json_action
 
 _ACTIONS_EXPECTING_UI_CHANGE = frozenset(
     {

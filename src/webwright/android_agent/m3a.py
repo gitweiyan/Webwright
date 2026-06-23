@@ -17,13 +17,9 @@
 import time
 
 from absl import logging
-from android_world.agents import agent_utils
-from android_world.agents import base_agent
-from android_world.agents import infer
-from android_world.agents import m3a_utils
-from android_world.env import interface
-from android_world.env import json_action
-from android_world.env import representation_utils
+from webwright.android import agent_utils, env_protocol, json_action, m3a_utils, ui_element
+from webwright.android.llm_protocol import MultimodalLlm
+from webwright.android_agent import base_agent
 from webwright.android_agent import transition_guard
 from webwright.utils.ui_signature import ui_elements_signature
 
@@ -113,8 +109,12 @@ GUIDANCE = (
     ' current UI provides direct evidence that the goal has been achieved.\n'
     '- Evidence Quality: Prefer direct evidence over indirect evidence or'
     ' assumptions.\n'
-    '- Conflicting Evidence: When observations conflict, gather additional'
-    ' evidence before acting or finishing.\n'
+    '## Conflicting Evidence\n'
+    'When different observations suggest different conclusions (for example'
+    ' screenshot vs hierarchy, or visual state vs control state):\n'
+    'Do not immediately act or finish the task.\n'
+    'Treat the situation as unresolved and gather additional evidence before'
+    ' proceeding.\n'
     'Action Related:\n'
     '- Use the `open_app` action whenever you want to open an app'
     ' (nothing will happen if the app is not installed), do not use the'
@@ -254,7 +254,7 @@ SUMMARY_PROMPT_TEMPLATE = (
 
 
 def _generate_ui_element_description(
-    ui_element: representation_utils.UIElement, index: int
+    ui_element: ui_element.UIElement, index: int
 ) -> str:
   """Generate a description for a given UI element with important information.
 
@@ -302,7 +302,7 @@ def _generate_ui_element_description(
 
 
 def _generate_ui_elements_description_list(
-    ui_elements: list[representation_utils.UIElement],
+    ui_elements: list[ui_element.UIElement],
     screen_width_height_px: tuple[int, int],
 ) -> str:
   """Generate concise information for a list of UIElement.
@@ -417,8 +417,8 @@ class M3A(base_agent.EnvironmentInteractingAgent):
 
   def __init__(
       self,
-      env: interface.AsyncEnv,
-      llm: infer.MultimodalLlmWrapper,
+      env: env_protocol.AsyncEnv,
+      llm: MultimodalLlm,
       name: str = 'M3A',
       wait_after_action_seconds: float = 2.0,
       max_history_steps: int = 12,
